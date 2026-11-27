@@ -15,8 +15,8 @@ describe('resolveWispUrl', () => {
   });
 
   it('uses VITE_WISP_URL when provided', () => {
-    vi.stubEnv('VITE_WISP_URL', 'wss://sideload.nvme0n1p.dev/wisp/');
-    expect(resolveWispUrl()).toBe('wss://sideload.nvme0n1p.dev/wisp/');
+    vi.stubEnv('VITE_WISP_URL', 'wss://sideload.shin.workers.dev/wisp/');
+    expect(resolveWispUrl()).toBe('wss://sideload.shin.workers.dev/wisp/');
   });
 
   it('trims whitespace and ignores blank overrides', () => {

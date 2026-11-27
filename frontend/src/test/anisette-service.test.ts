@@ -67,8 +67,8 @@ describe('getAnisetteEndpoint', () => {
   });
 
   it('derives https from the configured WISP URL', () => {
-    vi.stubEnv('VITE_WISP_URL', 'wss://sideload.nvme0n1p.dev/wisp/');
-    expect(getAnisetteEndpoint()).toBe('https://sideload.nvme0n1p.dev/anisette');
+    vi.stubEnv('VITE_WISP_URL', 'wss://sideload.shin.workers.dev/wisp/');
+    expect(getAnisetteEndpoint()).toBe('https://sideload.shin.workers.dev/anisette');
   });
 
   it('uses VITE_ANISETTE_URL when provided', () => {

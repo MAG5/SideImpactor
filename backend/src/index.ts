@@ -392,7 +392,7 @@ export default {
     if (url.pathname === "/" || url.pathname === "/healthz") {
       return json(200, {
         ok: true,
-        service: "webmuxd-wisp-demo",
+        service: "sideload-relay",
         now: new Date().toISOString(),
       });
     }
