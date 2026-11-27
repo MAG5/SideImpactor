@@ -8,7 +8,7 @@ const frontendDir = dirname(fileURLToPath(import.meta.url));
 const repoRootDir = resolve(frontendDir, '..');
 
 export default defineConfig({
-  // Set VITE_BASE when hosting under a sub-path (e.g. /SideImpactor/ on GitHub Pages).
+  // The Worker serves the SPA at the domain root; VITE_BASE is an escape hatch for other sub-path hosts.
   base: process.env.VITE_BASE?.trim() || '/',
   plugins: [react(), tailwindcss()],
   server: {

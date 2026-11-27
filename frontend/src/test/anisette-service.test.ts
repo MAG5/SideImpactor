@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   DEFAULT_ANISETTE_CLIENT_INFO,
+  DEFAULT_ANISETTE_USER_AGENT,
   getAnisetteClientInfo,
   getAnisetteData,
   getAnisetteEndpoint,
@@ -45,16 +46,19 @@ afterEach(() => {
 });
 
 describe('getAnisetteClientInfo', () => {
-  it('uses an OS X label because Apple 503s the legacy macOS one', () => {
-    expect(DEFAULT_ANISETTE_CLIENT_INFO).toContain('<Mac OS X;');
-    expect(DEFAULT_ANISETTE_CLIENT_INFO).not.toContain('<macOS;');
-    expect(DEFAULT_ANISETTE_CLIENT_INFO).not.toContain('com.apple.dt.Xcode');
+  it('claims the modern macOS identity AuthKit sends so GSA acceptance matches', () => {
+    expect(DEFAULT_ANISETTE_CLIENT_INFO).toBe(
+      '<MacBookPro18,3> <macOS;26.6;25F84> <com.apple.AuthKit/1 (com.apple.akd/1.0)>',
+    );
+    expect(DEFAULT_ANISETTE_USER_AGENT).toBe(
+      'AuthKit/1 (Macintosh; OS X 26.6) (com.apple.dt.Xcode/26.0)',
+    );
     expect(getAnisetteClientInfo()).toBe(DEFAULT_ANISETTE_CLIENT_INFO);
   });
 
   it('honours the localStorage override and ignores a blank one', () => {
-    window.localStorage.setItem(ANISETTE_CLIENT_INFO_STORAGE_KEY, '<Mac14,15> <Mac OS X;15.2;24C101>');
-    expect(getAnisetteClientInfo()).toBe('<Mac14,15> <Mac OS X;15.2;24C101>');
+    window.localStorage.setItem(ANISETTE_CLIENT_INFO_STORAGE_KEY, '<MacBookPro18,3> <macOS;15.2;24C101>');
+    expect(getAnisetteClientInfo()).toBe('<MacBookPro18,3> <macOS;15.2;24C101>');
 
     window.localStorage.setItem(ANISETTE_CLIENT_INFO_STORAGE_KEY, '   ');
     expect(getAnisetteClientInfo()).toBe(DEFAULT_ANISETTE_CLIENT_INFO);
@@ -104,6 +108,14 @@ describe('toAnisetteData', () => {
     const data = toAnisetteData(REMOTE_HEADERS);
     expect(data.deviceDescription).toBe(DEFAULT_ANISETTE_CLIENT_INFO);
     expect(data.deviceDescription).not.toContain('MacBookPro13,3');
+  });
+
+  it('creates a single coherent identity across the header set', () => {
+    const data = toAnisetteData(REMOTE_HEADERS);
+    // GSA correlates the OS label with the GsService2 user agent; the pair must
+    // not mix an older client-info with a newer UA or vice versa.
+    expect(data.deviceDescription).toContain('macOS;26.6');
+    expect(DEFAULT_ANISETTE_USER_AGENT).toContain('OS X 26.6');
   });
 
   it('falls back for optional headers', () => {

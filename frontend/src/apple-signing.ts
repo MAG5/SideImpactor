@@ -1,7 +1,10 @@
 import { strFromU8, unzipSync } from 'fflate';
 import type { AnisetteData, AppleAPI, AppID, Certificate, Device, Team } from 'altsign.js';
 import { initLibcurl } from './anisette-libcurl-init';
+import { DEFAULT_ANISETTE_USER_AGENT } from './anisette-service';
 import { requireLibcurl } from './wasm/libcurl';
+
+const GSA_SRP_URL_PREFIX = 'https://gsa.apple.com/grandslam/GsService2';
 
 const SIGNING_IDENTITY_STORAGE_KEY = 'webmuxd:signing-identities';
 const PRIMARY_APP_INFO_PLIST_RE = /^Payload\/[^/]+\.app\/Info\.plist$/;
@@ -475,6 +478,31 @@ async function loadAltsignModule(): Promise<AltsignModule> {
   return await altsignModulePromise;
 }
 
+/**
+ * altsign.js sends a 2018 `akd/1.0 CFNetwork/978.0.7 Darwin/18.7.0` user agent,
+ * which GSA pairs with its image-time anisette and answers -22410 ("This action
+ * could not be completed"). AuthKit on a current Mac uses the one below for the
+ * SRP endpoints; leave the 2FA endpoints on their existing `Xcode` identity.
+ */
+function withAuthKitUserAgent(url: string, headers: HeadersInit | undefined): HeadersInit {
+  if (!url.startsWith(GSA_SRP_URL_PREFIX)) {
+    return headers ?? {};
+  }
+  const merged: Record<string, string> = {};
+  if (headers instanceof Headers) {
+    headers.forEach((value, key) => { merged[key] = value; });
+  } else if (Array.isArray(headers)) {
+    for (const [key, value] of headers) merged[key] = value;
+  } else if (headers) {
+    for (const [key, value] of Object.entries(headers)) merged[key] = String(value);
+  }
+  for (const key of Object.keys(merged)) {
+    if (key.toLowerCase() === 'user-agent') delete merged[key];
+  }
+  merged['User-Agent'] = DEFAULT_ANISETTE_USER_AGENT;
+  return merged;
+}
+
 async function getAppleApi(log?: (msg: string) => void): Promise<{ api: AppleAPI; fetch: AltsignFetch }> {
   const uiLog = log ?? (() => undefined);
   const { AppleAPI, Fetch } = await loadAltsignModule();
@@ -487,7 +515,7 @@ async function getAppleApi(log?: (msg: string) => void): Promise<{ api: AppleAPI
       const libcurl = requireLibcurl();
       const libcurlOpts = {
         method: options.method,
-        headers: options.headers,
+        headers: withAuthKitUserAgent(url, options.headers),
         body: options.body,
         redirect: 'manual',
         insecure: true,
@@ -534,6 +562,20 @@ async function getAppleApi(log?: (msg: string) => void): Promise<{ api: AppleAPI
   patchHandleTwoFactor(api, appleFetchInstance);
   patchAuthenticateRetry(api, appleFetchInstance);
   return { api, fetch: appleFetchInstance };
+}
+
+/**
+ * -22410 means GSA refused the anisette/device identity before even checking
+ * the password, so retrying the same headers is pointless. Point at the
+ * localStorage override rather than leaving the bare code in the UI.
+ */
+function withAuthAdvice(error: unknown): Error {
+  const err = error instanceof Error ? error : new Error(String(error));
+  if (err.message.includes('(-22410)')) {
+    err.message +=
+      ' Apple rejected this device identity. Retry once; if it persists, point localStorage "webmuxd:anisette-url" at a different anisette server and sign in again.';
+  }
+  return err;
 }
 
 export async function loginAppleDeveloperAccount(request: AppleDeveloperLoginRequest): Promise<AppleDeveloperContext> {
@@ -590,10 +632,10 @@ export async function loginAppleDeveloperAccount(request: AppleDeveloperLoginReq
         if (reauth2 instanceof Error && reauth2.message === REAUTH_SENTINEL) {
           throw new Error('Authentication failed after two-factor verification. Please sign in again.');
         }
-        throw reauth2;
+        throw withAuthAdvice(reauth2);
       }
     } else {
-      throw e;
+      throw withAuthAdvice(e);
     }
   }
 

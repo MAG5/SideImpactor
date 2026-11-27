@@ -1,6 +1,6 @@
 /**
- * Static hosts (GitHub Pages) have no same-origin Wisp relay, so the endpoint
- * can be pointed elsewhere at build time via VITE_WISP_URL.
+ * The Worker serves the SPA and the relay from one origin; VITE_WISP_URL only
+ * exists for builds hosted somewhere else.
  */
 export function resolveWispUrl(): string {
   const override = (import.meta.env.VITE_WISP_URL as string | undefined)?.trim();

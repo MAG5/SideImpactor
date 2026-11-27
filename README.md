@@ -43,20 +43,26 @@ build-time default.
 Apple's GSA endpoints need anisette headers (machine ID + one-time password) for
 every login request. They are fetched over HTTP from the relay's `/anisette`
 route, which forwards to a Mac-side anisette server. The Worker is not an open
-proxy: the upstream list is fixed to `mac-ani.jkcoxson.com` and
-`new.ani.sidestore.io`. Both are third-party services — they receive Apple's
-lookup request but never your Apple ID password, and the password is only sent
-to Apple over the WISP connection.
+proxy: the upstream list is fixed to `new.ani.sidestore.io` (preferred) with
+`mac-ani.jkcoxson.com` as fallback, and a response missing the required
+`X-Apple-*` headers is rejected before it reaches the browser. Both are
+third-party services — they receive Apple's lookup request but never your Apple
+ID password, and the password is only sent to Apple over the WISP connection.
 
-The browser always requests a fresh header set (OTPs are single-use). The OS
-identity sent to Apple comes from the browser, not the upstream, so an old
-`<Mac OS X;10.12>` label from a server cannot trigger the GSA 503. Every value
-can be overridden for debugging:
+The browser always requests a fresh header set (OTPs are single-use). The device
+identity sent to Apple comes from the browser, not the upstream: it claims
+`<MacBookPro18,3> <macOS;26.6;25F84>` and pairs the SRP calls with AuthKit's
+`AuthKit/1 (Macintosh; OS X 26.6) (com.apple.dt.Xcode/26.0)` user agent. GSA
+correlates the two, so mixing an old client-info with a newer user agent (or
+vice versa) fails with -22410. Every value can be overridden for debugging:
 
 ```js
 localStorage.setItem('webmuxd:anisette-url', 'https://your-relay.example/anisette');
-localStorage.setItem('webmuxd:anisette-client-info', '<Mac14,15> <Mac OS X;27.0.1;26A434> ...');
+localStorage.setItem('webmuxd:anisette-client-info', '<MacBookPro18,3> <macOS;26.6;25F84> ...');
 ```
+
+The relay also sets `x-anisette-upstream` on `/anisette` responses so you can see
+which server minted the headers.
 
 `VITE_ANISETTE_URL` sets the build-time endpoint; otherwise it is derived from
 `VITE_WISP_URL` (same host, path `/anisette`). Self-hosted relays must implement
@@ -88,10 +94,13 @@ bun run build:frontend
 bun run build:wasm
 ```
 
-Static hosting (e.g. GitHub Pages under `/SideImpactor/`):
+Hosting is Worker-only: the Cloudflare Worker serves the built SPA from
+`frontend/dist`, plus `/wisp/` and `/anisette` on the same origin, so no
+`VITE_BASE` or `VITE_WISP_URL` is needed. Build, then deploy:
 
 ```bash
-VITE_BASE=/SideImpactor/ VITE_WISP_URL=wss://your-relay.example/wisp/ bun run build:frontend
+bun run build:frontend
+cd backend && bun run deploy
 ```
 
 ## Docker
@@ -113,7 +122,7 @@ bun run deploy
 
 ```bash
 bun run test            # webmuxd unit tests
-bun run test:frontend   # frontend vitest suite (200 tests)
+bun run test:frontend   # frontend vitest suite
 ```
 
 ## Credits

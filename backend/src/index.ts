@@ -14,18 +14,41 @@ const APPLE_HOSTNAME_WHITELIST = [
  * Apple rejects identities provisioned by the Android CoreADI libraries inside
  * anisette-js (`finishMachineProvisioning` -> 401 / ec=-29003), so browsers now
  * take anisette headers from a Mac-side service. Upstreams are fixed here to
- * avoid turning this Worker into an open proxy.
+ * avoid turning this Worker into an open proxy. The SideStore-hosted v3 server
+ * is preferred because its provisioning data is accepted by current GSA; the
+ * legacy mac-ani instance stays as a fallback.
  */
 const ANISETTE_UPSTREAMS = [
-  "https://mac-ani.jkcoxson.com/",
   "https://new.ani.sidestore.io/",
+  "https://mac-ani.jkcoxson.com/",
+];
+
+const ANISETTE_TIMEOUT_MS = 8000;
+
+/** Every successful payload must carry these or GSA rejects the login later. */
+const REQUIRED_ANISETTE_HEADERS = [
+  "X-Apple-I-MD-M",
+  "X-Apple-I-MD",
+  "X-Apple-I-MD-LU",
+  "X-Apple-I-MD-RINFO",
+  "X-Mme-Device-Id",
+  "X-Apple-I-Client-Time",
 ];
 
 const ANISETTE_CORS_HEADERS: Record<string, string> = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, OPTIONS",
   "access-control-allow-headers": "accept",
+  "access-control-expose-headers": "x-anisette-upstream",
 };
+
+function hasRequiredAnisetteHeaders(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return false;
+  }
+  const keys = new Set(Object.keys(payload as Record<string, unknown>).map((key) => key.toLowerCase()));
+  return REQUIRED_ANISETTE_HEADERS.every((name) => keys.has(name.toLowerCase()));
+}
 
 wisp.options.hostname_whitelist = APPLE_HOSTNAME_WHITELIST;
 wisp.options.port_whitelist = [443];
@@ -356,18 +379,32 @@ async function handleAnisette(request: Request): Promise<Response> {
       const response = await fetch(upstream, {
         headers: { accept: "application/json" },
         redirect: "follow",
+        signal: AbortSignal.timeout(ANISETTE_TIMEOUT_MS),
       });
       if (!response.ok) {
         console.warn("Anisette upstream responded", upstream, response.status);
         continue;
       }
       const body = await response.text();
+      let payload: unknown;
+      try {
+        payload = JSON.parse(body);
+      } catch {
+        console.warn("Anisette upstream returned non-JSON", upstream);
+        continue;
+      }
+      if (!hasRequiredAnisetteHeaders(payload)) {
+        console.warn("Anisette upstream payload missing required headers", upstream);
+        continue;
+      }
       return new Response(body, {
         status: 200,
         headers: {
           ...ANISETTE_CORS_HEADERS,
           "content-type": "application/json; charset=utf-8",
           "cache-control": "no-store",
+          // Lets the client log which server minted this OTP when diagnosing.
+          "x-anisette-upstream": new URL(upstream).host,
         },
       });
     } catch (error) {

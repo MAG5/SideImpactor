@@ -15,12 +15,17 @@ export interface AnisetteData {
 }
 
 /**
- * Apple's GSA edge answers HTTP 503 to any `X-MMe-Client-Info` that carries the
- * legacy `<macOS;…>` OS label. Keep a currently accepted Mac identity, and let
- * it be overridden via localStorage so Apple's next change doesn't need a rebuild.
+ * GSA checks the identity a login claims against the machine behind the
+ * anisette headers. Older labels (`<Mac OS X;10.12.6>`, the 2018 `akd` user
+ * agent) now fail with -22410 "This action could not be completed", so mirror
+ * what AuthKit sends on a current Mac. Override via localStorage when Apple
+ * rotates the accepted identity again.
  */
 export const DEFAULT_ANISETTE_CLIENT_INFO =
-  '<Mac14,15> <Mac OS X;27.0.1;26A434> <com.apple.AuthKit/1 (com.apple.akd/1.0)>';
+  '<MacBookPro18,3> <macOS;26.6;25F84> <com.apple.AuthKit/1 (com.apple.akd/1.0)>';
+
+/** User-Agent current AuthKit uses for the GsService2 SRP endpoints. */
+export const DEFAULT_ANISETTE_USER_AGENT = 'AuthKit/1 (Macintosh; OS X 26.6) (com.apple.dt.Xcode/26.0)';
 
 export function getAnisetteClientInfo(): string {
   const override = loadText(ANISETTE_CLIENT_INFO_STORAGE_KEY)?.trim();
