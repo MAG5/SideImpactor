@@ -35,6 +35,16 @@ jobs:
       - name: Build frontend
         run: bun run build:frontend
 
+      - name: Verify Cloudflare credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          curl -sS -o /tmp/verify.json -w "token verify: %{http_code}\n" -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" https://api.cloudflare.com/client/v4/user/tokens/verify
+          cat /tmp/verify.json; echo
+          curl -sS -o /tmp/scripts.json -w "worker scripts: %{http_code}\n" -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts"
+          head -c 400 /tmp/scripts.json; echo
+
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v4
         with:
