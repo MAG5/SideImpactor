@@ -149,6 +149,8 @@ function patchHandleTwoFactor(api: AppleAPI, fetch: AltsignFetch): void {
   const auth: any = (api as any).auth;
   if (!auth || typeof auth.handleTwoFactor !== 'function') return;
 
+  let prompts = 0;
+
   auth.handleTwoFactor = async function (
     dsid: string,
     idmsToken: string,
@@ -156,6 +158,12 @@ function patchHandleTwoFactor(api: AppleAPI, fetch: AltsignFetch): void {
     verificationHandler: ((ctx: TwoFactorContext) => void) | undefined,
   ): Promise<boolean> {
     if (!verificationHandler) return false;
+    prompts += 1;
+    if (prompts > 2) {
+      // A correct code that keeps re-prompting means Apple refuses the session;
+      // stop the loop and surface an actionable error instead of spinning.
+      throw new Error('Apple kept requesting two-factor verification. Wait a few minutes, then sign in again.');
+    }
     try {
       const identityToken = btoa(`${dsid}:${idmsToken}`);
       const headers: Record<string, string> = {
@@ -214,12 +222,18 @@ function patchHandleTwoFactor(api: AppleAPI, fetch: AltsignFetch): void {
           // '__CANCELLED__' sentinel: user dismissed the modal — skip network request.
           if (!trimmed || trimmed === '__CANCELLED__') { resolve(false); return; }
           try {
+            console.log('[2FA] validating security code via GsService2/validate...');
             const verifyHeaders = { ...headers, 'security-code': trimmed };
             const resp = await fetch.get(GSA_VALIDATE_URL, verifyHeaders);
             const text = await resp.text();
             const plist = parsePlistSimple(text);
-            resolve((plist as Record<string, unknown>)['ec'] === 0);
-          } catch { resolve(false); }
+            const ec = (plist as Record<string, unknown>)['ec'];
+            console.log('[2FA] validate response ok=%s ec=%o body=%s', resp.ok, ec, text.slice(0, 200));
+            resolve(ec === 0);
+          } catch (e) {
+            console.warn('[2FA] validate request failed:', e);
+            resolve(false);
+          }
         };
 
         const requestSms = async (phoneId: number): Promise<void> => {
@@ -341,6 +355,7 @@ function patchAuthenticateRetry(api: AppleAPI, _apiFetch: AltsignFetch): void {
           const success = await auth.handleTwoFactor(
             adsid, idmsToken, anisetteArg, storedVerificationHandler,
           );
+          console.log('[auth] handleTwoFactor resolved:', success);
           if (success) {
             // Apple invalidates the SRP session after 2FA at this stage.
             // Throw a sentinel so loginAppleDeveloperAccount starts a fresh SRP exchange.
@@ -475,6 +490,26 @@ async function loadAltsignModule(): Promise<AltsignModule> {
   return await altsignModulePromise;
 }
 
+/**
+ * libcurl over WISP can stall indefinitely when the tunnel drops mid-response,
+ * which used to leave 2FA stuck on "Verifying…" with no error. Race every
+ * request against a timeout so the UI always gets a rejection.
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
+
+function fetchWithTimeout(url: string, opts: never): Promise<Response> {
+  const libcurl = requireLibcurl();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`Apple request to ${url.split('?')[0]} timed out after ${REQUEST_TIMEOUT_MS / 1000}s`)),
+      REQUEST_TIMEOUT_MS,
+    );
+  });
+  return Promise.race([libcurl.fetch(url, opts) as Promise<Response>, timeout])
+    .finally(() => { if (timer) clearTimeout(timer); });
+}
+
 async function getAppleApi(log?: (msg: string) => void): Promise<{ api: AppleAPI; fetch: AltsignFetch }> {
   const uiLog = log ?? (() => undefined);
   const { AppleAPI, Fetch } = await loadAltsignModule();
@@ -484,7 +519,6 @@ async function getAppleApi(log?: (msg: string) => void): Promise<{ api: AppleAPI
       headers?: HeadersInit;
       body?: BodyInit | null;
     }): Promise<Response> => {
-      const libcurl = requireLibcurl();
       const libcurlOpts = {
         method: options.method,
         headers: options.headers,
@@ -494,7 +528,7 @@ async function getAppleApi(log?: (msg: string) => void): Promise<{ api: AppleAPI
         verbose: 4,
         _libcurl_http_version: 1.1,
       } as never;
-      let response = await libcurl.fetch(url, libcurlOpts) as Response;
+      let response = await fetchWithTimeout(url, libcurlOpts);
       // Auto-retry on Apple GSA 503 (transient rate-limit / overload).
       // Use exponential backoff: 5s, 10s, 20s, 40s — up to ~75s total.
       if (url.includes('gsa.apple.com') && response.status === 503) {
@@ -520,7 +554,7 @@ async function getAppleApi(log?: (msg: string) => void): Promise<{ api: AppleAPI
           console.warn(`[fetch] ${msg}`);
           uiLog(msg);
           await new Promise((r) => setTimeout(r, delays[attempt]));
-          response = await libcurl.fetch(url, libcurlOpts) as Response;
+          response = await fetchWithTimeout(url, libcurlOpts);
           if (response.status !== 503) break;
         }
         if (response.status === 503) {

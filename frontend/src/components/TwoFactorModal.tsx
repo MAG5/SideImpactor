@@ -47,6 +47,16 @@ export function TwoFactorModal({ open, ctx, onCancel, serverError, onRetry }: Tw
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // A new 2FA context means Apple asked again (e.g. the session didn't stick).
+  // Without this reset the button stays on "Verifying…" with no visible prompt.
+  useEffect(() => {
+    if (open && ctx) {
+      setVerifyBusy(false);
+      setLocalError(null);
+      setCode('');
+    }
+  }, [ctx, open]);
+
   // Focus input when switching modes or after SMS sent
   useEffect(() => {
     if (open && (mode === 'device' || smsSent)) {
