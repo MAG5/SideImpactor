@@ -8,6 +8,7 @@ export const APPLE_ACCOUNT_LIST_STORAGE_KEY = 'webmuxd:apple-account-list';
 export const APPLE_ACCOUNT_SESSION_MAP_STORAGE_KEY = 'webmuxd:apple-account-session-map';
 export const APPLE_REMEMBER_SESSION_STORAGE_KEY = 'webmuxd:apple-remember-session';
 export const SELECTED_DEVICE_UDID_STORAGE_KEY = 'webmuxd:selected-device-udid';
+export const ANISETTE_CLIENT_INFO_STORAGE_KEY = 'webmuxd:anisette-client-info';
 
 export function loadText(key: string): string | null {
   return window.localStorage.getItem(key);
