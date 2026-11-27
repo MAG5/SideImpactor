@@ -332,7 +332,15 @@ function patchAuthenticateRetry(api: AppleAPI, _apiFetch: AltsignFetch): void {
 
       const status = response['Status'] as Record<string, unknown> | undefined;
       const au = status?.['au'];
-      console.log('[auth] sendAuthRequest o=%s au=%s keys=%o', params?.['o'], au, Object.keys(response));
+      console.log('[auth] sendAuthRequest o=%s au=%s hsc=%o keys=%o', params?.['o'], au, status?.['hsc'], Object.keys(response));
+
+      // Some accounts get 2FA signalled only as hsc=409 (SideSign's "pushedCode");
+      // altsign.js knows a single shape, so normalize it to the one it handles.
+      if (params?.['o'] === 'complete' && status && (au === undefined || au === null) && status['hsc'] === 409) {
+        console.log('[auth] complete signalled 2FA via hsc=409 — normalizing au');
+        status['au'] = 'trustedDeviceSecondaryAuth';
+        return response;
+      }
 
       // Normalize legacy au value
       if (au === 'secondaryAuth') {
@@ -389,20 +397,12 @@ function patchAuthenticateRetry(api: AppleAPI, _apiFetch: AltsignFetch): void {
   auth.authenticate = async function (...args: unknown[]): Promise<unknown> {
     callCount++;
     storedVerificationHandler = args[3] as ((ctx: TwoFactorContext) => void) | undefined;
-    console.log(`[auth] authenticate call #${callCount}`);
+    const anisette = args[2] as AnisetteData;
+    console.log(`[auth] authenticate call #${callCount} MID=${anisette.machineID} MD=${anisette.oneTimePassword.slice(0, 8)}...`);
 
-    // Always use fresh anisette on any retry call (callCount > 1).
-    if (callCount > 1) {
-      try {
-        const { getAnisetteData } = await import('./anisette-service');
-        const freshAnisette = await getAnisetteData();
-        args = [...args];
-        args[2] = freshAnisette;
-        console.log('[auth] post-2FA retry: swapped in fresh anisette OTP');
-      } catch (e) {
-        console.warn('[auth] post-2FA retry: could not fetch fresh anisette, proceeding with original', e);
-      }
-    }
+    // The post-2FA retry MUST reuse the same anisette as the request that the
+    // code validated: Apple treats a changed one-time password as a new device
+    // and asks for 2FA again (observed as an endless complete→2FA loop).
 
     try {
       return await original(...args);
@@ -634,18 +634,17 @@ export async function loginAppleDeveloperAccount(request: AppleDeveloperLoginReq
     // After 2FA at the apptokens stage, Apple invalidates the SRP session.
     // The sendAuthRequest patch throws REAUTH_SENTINEL to signal this.
     // We create a completely fresh AppleAPI (new auth state, new patches) and
-    // retry the full SRP exchange with fresh anisette.
+    // retry the SRP exchange with the SAME anisette the code was validated
+    // against — a new one-time password reads as a new device to Apple.
     if (e instanceof Error && e.message === REAUTH_SENTINEL) {
-      log('Login stage: 2FA verified — restarting SRP with fresh session...');
+      log('Login stage: 2FA verified — restarting SRP with the verified anisette...');
       // Reset the shared fetch instance so the re-auth uses a fresh libcurl
       // TCP connection to Apple — eliminates connection-state as a failure cause.
       appleFetchInstance = null;
       const fresh = await getAppleApi(log);
       api = fresh.api;
-      const { getAnisetteData } = await import('./anisette-service');
-      const freshAnisette = await getAnisetteData();
       try {
-        ({ session } = await api.authenticate(appleId, password, freshAnisette, verificationCallback));
+        ({ session } = await api.authenticate(appleId, password, request.anisetteData, verificationCallback));
       } catch (reauth2) {
         // If the fresh SRP exchange also hits the apptokens 2FA gate (rare),
         // REAUTH_SENTINEL escapes here. Surface it as a human-readable error

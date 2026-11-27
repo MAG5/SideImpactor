@@ -104,5 +104,14 @@ export async function getAnisetteData(): Promise<AnisetteData> {
     throw new Error(`Anisette service returned an unexpected payload from ${endpoint}`);
   }
 
-  return toAnisetteData(payload as AnisetteHeaders);
+  const data = toAnisetteData(payload as AnisetteHeaders);
+  // The MID must stay constant across a login; a rotating one makes Apple
+  // treat the post-2FA retry as a new device and re-prompt for a code.
+  console.info(
+    '[anisette] upstream=%s MID=%s MD=%s...',
+    response.headers.get('x-anisette-upstream') ?? '(none)',
+    data.machineID,
+    data.oneTimePassword.slice(0, 8),
+  );
+  return data;
 }
