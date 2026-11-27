@@ -204,6 +204,8 @@ describe('App — remote ipa', () => {
       ),
     );
     window.location.hash = '#ipa=https://cdn.example.com/app.ipa';
+    ensureClientSelectedMock.mockResolvedValue({ isSessionStarted: false, close: async () => {} });
+    pairDeviceFlowMock.mockResolvedValue({ udid: 'UDID-TEST', name: 'iPhone' });
 
     try {
       render(<App />);
@@ -217,6 +219,16 @@ describe('App — remote ipa', () => {
 
       await userEvent.click(install);
       expect(await screen.findByText('Add Account', { selector: 'h2' })).toBeInTheDocument();
+
+      await userEvent.type(screen.getByLabelText('Apple ID'), 'user@example.com');
+      await userEvent.type(screen.getByLabelText('Password'), 'secret');
+      await userEvent.click(screen.getByRole('button', { name: 'Sign In' }));
+
+      await waitFor(() => expect(signIpaFlowMock).toHaveBeenCalled());
+      const signRequest = signIpaFlowMock.mock.calls[0][0] as { ipaFile: File; deviceUdid: string };
+      expect(signRequest.ipaFile.name).toBe('app.ipa');
+      expect(signRequest.deviceUdid).toBe('UDID-TEST');
+      await waitFor(() => expect(installFlowMock).toHaveBeenCalled());
     } finally {
       vi.unstubAllGlobals();
     }
