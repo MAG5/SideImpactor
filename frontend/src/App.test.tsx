@@ -233,6 +233,31 @@ describe('App — remote ipa', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it('reuses a cached download across reloads without fetching again', async () => {
+    const payload = new Uint8Array([5, 6, 7, 8]);
+    const cacheStub = {
+      match: async () => new Response(payload, { status: 200 }),
+      put: async () => {},
+      delete: async () => true,
+    };
+    vi.stubGlobal('caches', { open: async () => cacheStub });
+    const fetchSpy = vi.fn(async () => {
+      throw new Error('asset should come from cache');
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    window.location.hash = '#ipa=https://cdn.example.com/app.ipa';
+
+    try {
+      render(<App />);
+
+      expect(await screen.findByText('Cached')).toBeInTheDocument();
+      expect(await screen.findByRole('button', { name: 'Install Now' })).toBeEnabled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('App — saved accounts rehydration', () => {

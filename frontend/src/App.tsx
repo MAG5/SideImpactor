@@ -28,14 +28,17 @@ import {
 import { accountKey, buildPreparedSourceKey, formatError, formatFileSize } from './lib/ids';
 import { listKnownDeviceUdids } from './lib/pair-record';
 import {
+  deleteCachedIpa,
   downloadIpaBytes,
   IpaDownloadError,
   ipaFileName,
   parseIpaSource,
   proxyDownloadUrl,
+  readCachedIpa,
   resolveGithubIpaAsset,
   sha256Hex,
   digestMatches,
+  writeCachedIpa,
   type IpaSource,
   type RemoteIpaAsset,
 } from './lib/remote-ipa';
@@ -116,6 +119,8 @@ export function App() {
   const [remoteIpa, setRemoteIpa] = useState<RemoteIpaView | null>(null);
   const pendingInstallFileRef = useRef<File | null>(null);
   const remoteDownloadedFileRef = useRef<File | null>(null);
+  const remoteSourceRef = useRef<IpaSource | null>(null);
+  const remoteAssetUrlRef = useRef<string | null>(null);
 
   // Anisette
   const [anisetteData, setAnisetteData] = useState<AnisetteData | null>(null);
@@ -301,6 +306,7 @@ export function App() {
         manualUrl: null,
         viaProxy: false,
         digestVerified: false,
+        fromCache: false,
       });
       addLog(`remote ipa: ${source.label}`);
 
@@ -314,6 +320,8 @@ export function App() {
         }
 
         const target = asset;
+        remoteSourceRef.current = source;
+        remoteAssetUrlRef.current = target.url;
         const sizeLabel = target.size > 0 ? formatFileSize(target.size) : null;
         setRemoteIpa((prev) =>
           prev
@@ -337,34 +345,55 @@ export function App() {
           setRemoteIpa((prev) => (prev ? { ...prev, percent } : prev));
         };
 
-        let buffer: ArrayBuffer;
-        let viaProxy = false;
-        try {
-          buffer = await downloadIpaBytes(target.url, { onProgress });
-        } catch (error) {
-          const mirrored =
-            error instanceof IpaDownloadError && error.corsBlocked && target.digest
-              ? proxyDownloadUrl(target.url)
-              : null;
-          if (!mirrored) throw error;
-          viaProxy = true;
-          addLog('remote ipa: direct download blocked by CORS, retrying through the public mirror');
-          setRemoteIpa((prev) => (prev ? { ...prev, viaProxy: true, percent: null } : prev));
-          buffer = await downloadIpaBytes(mirrored, { onProgress });
-        }
-
+        let bytes = await readCachedIpa(target.url);
+        let fromCache = false;
         let digestVerified = false;
-        if (target.digest) {
-          const hex = await sha256Hex(buffer);
-          if (!digestMatches(target.digest, hex)) {
-            throw new Error(
-              `sha256 mismatch (expected ${target.digest.slice(7, 19)}…, got ${hex.slice(0, 12)}…), download discarded`,
-            );
+        let viaProxy = false;
+
+        if (bytes) {
+          if (!target.digest || digestMatches(target.digest, await sha256Hex(bytes))) {
+            fromCache = true;
+            digestVerified = Boolean(target.digest);
+            setRemoteIpa((prev) => (prev ? { ...prev, percent: 100 } : prev));
+            addLog('remote ipa: loaded from browser cache');
+          } else {
+            await deleteCachedIpa(target.url);
+            addLog('remote ipa: cached copy failed sha256, downloading again');
+            bytes = null;
           }
-          digestVerified = true;
         }
 
-        const file = new File([buffer], ipaFileName(target.name, target.url), {
+        if (!bytes) {
+          try {
+            bytes = await downloadIpaBytes(target.url, { onProgress });
+          } catch (error) {
+            const mirrored =
+              error instanceof IpaDownloadError && error.corsBlocked && target.digest
+                ? proxyDownloadUrl(target.url)
+                : null;
+            if (!mirrored) throw error;
+            viaProxy = true;
+            addLog('remote ipa: direct download blocked by CORS, retrying through the public mirror');
+            setRemoteIpa((prev) => (prev ? { ...prev, viaProxy: true, percent: null } : prev));
+            bytes = await downloadIpaBytes(mirrored, { onProgress });
+          }
+
+          if (target.digest) {
+            const hex = await sha256Hex(bytes);
+            if (!digestMatches(target.digest, hex)) {
+              throw new Error(
+                `sha256 mismatch (expected ${target.digest.slice(7, 19)}…, got ${hex.slice(0, 12)}…), download discarded`,
+              );
+            }
+            digestVerified = true;
+          }
+
+          if (!(await writeCachedIpa(target.url, bytes))) {
+            addLog('remote ipa: browser cache unavailable, next visit will download again');
+          }
+        }
+
+        const file = new File([bytes], ipaFileName(target.name, target.url), {
           type: 'application/octet-stream',
         });
         remoteDownloadedFileRef.current = file;
@@ -378,9 +407,10 @@ export function App() {
           manualUrl: null,
           viaProxy,
           digestVerified,
+          fromCache,
         });
         addLog(
-          `remote ipa: downloaded ${file.name} (${formatFileSize(file.size)})${
+          `remote ipa: ${fromCache ? 'ready from cache' : 'downloaded'} ${file.name} (${formatFileSize(file.size)})${
             digestVerified ? ', sha256 verified' : ''
           }${viaProxy ? ' via mirror' : ''}`,
         );
@@ -401,6 +431,7 @@ export function App() {
           manualUrl,
           viaProxy: false,
           digestVerified: false,
+          fromCache: false,
         });
         addLog(`remote ipa failed: ${message}`);
       }
@@ -423,6 +454,17 @@ export function App() {
     window.addEventListener('hashchange', tryLoad);
     return () => window.removeEventListener('hashchange', tryLoad);
   }, [loadRemoteIpa]);
+
+  const handleRemoteRedownload = useCallback(() => {
+    const source = remoteSourceRef.current;
+    if (!source) return;
+    void (async () => {
+      const assetUrl = remoteAssetUrlRef.current;
+      if (assetUrl) await deleteCachedIpa(assetUrl);
+      addLog('remote ipa: cache cleared, downloading again');
+      await loadRemoteIpa(source);
+    })();
+  }, [addLog, loadRemoteIpa]);
 
   const handleSelectedUdidChange = useCallback(
     (value: string) => {
@@ -911,6 +953,7 @@ export function App() {
             onFileChange={handleFileChange}
             remoteIpa={remoteIpa}
             onRemoteInstall={handleRemoteInstall}
+            onRemoteRedownload={handleRemoteRedownload}
             remoteInstallBusy={busy.sign || busy.install}
             remoteInstallDisabled={
               !selectedIpaFile || busy.pair || busy.loginSign || busy.sign || busy.install

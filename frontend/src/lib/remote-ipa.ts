@@ -247,6 +247,60 @@ export async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
     .join('');
 }
 
+const IPA_CACHE_NAME = 'sideimpactor-ipa-v1';
+
+function getCacheStorage(): CacheStorage | null {
+  try {
+    return typeof caches === 'undefined' ? null : caches;
+  } catch {
+    return null;
+  }
+}
+
+/** Completed downloads are kept across reloads; returns null when unavailable or missing. */
+export async function readCachedIpa(url: string): Promise<ArrayBuffer | null> {
+  const storage = getCacheStorage();
+  if (!storage) return null;
+  try {
+    const cache = await storage.open(IPA_CACHE_NAME);
+    const response = await cache.match(url);
+    return response ? await response.arrayBuffer() : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function writeCachedIpa(url: string, bytes: ArrayBuffer): Promise<boolean> {
+  const storage = getCacheStorage();
+  if (!storage) return false;
+  try {
+    const cache = await storage.open(IPA_CACHE_NAME);
+    await cache.put(
+      url,
+      new Response(bytes, {
+        headers: {
+          'content-type': 'application/octet-stream',
+          'x-ipa-cached-at': new Date().toISOString(),
+        },
+      }),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteCachedIpa(url: string): Promise<void> {
+  const storage = getCacheStorage();
+  if (!storage) return;
+  try {
+    const cache = await storage.open(IPA_CACHE_NAME);
+    await cache.delete(url);
+  } catch {
+    // A missing cache is equivalent to a successful delete.
+  }
+}
+
 export function digestMatches(digest: string | null | undefined, hex: string): boolean {
   if (!digest) return false;
   const separator = digest.indexOf(':');

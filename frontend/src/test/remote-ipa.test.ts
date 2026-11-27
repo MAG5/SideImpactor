@@ -1,15 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_GITHUB_PROXY,
+  deleteCachedIpa,
   digestMatches,
   downloadIpaBytes,
   IpaDownloadError,
   ipaFileName,
   parseIpaSource,
   proxyDownloadUrl,
+  readCachedIpa,
   resolveGithubIpaAsset,
   resolveProxyTemplate,
   sha256Hex,
+  writeCachedIpa,
 } from '../lib/remote-ipa';
 import { IPA_PROXY_STORAGE_KEY } from '../lib/storage';
 
@@ -162,5 +165,64 @@ describe('digest helpers', () => {
     expect(ipaFileName('App.IPA', 'https://x/y.ipa')).toBe('App.IPA');
     expect(ipaFileName('', 'https://x/path/Download?id=1')).toBe('Download.ipa');
     expect(ipaFileName('a/b', 'https://x/y.ipa')).toBe('a_b.ipa');
+  });
+});
+
+describe('ipa cache', () => {
+  const store = new Map<string, Response>();
+  const fakeCache = {
+    match: async (url: string) => store.get(url),
+    put: async (url: string, response: Response) => {
+      store.set(url, response);
+    },
+    delete: async (url: string) => store.delete(url),
+  };
+
+  beforeEach(() => {
+    store.clear();
+  });
+
+  it('round-trips bytes through the named cache', async () => {
+    const open = vi.fn(async () => fakeCache);
+    vi.stubGlobal('caches', { open });
+    try {
+      const bytes = new Uint8Array([9, 8, 7]).buffer;
+      expect(await writeCachedIpa('https://cdn.example.com/a.ipa', bytes)).toBe(true);
+      expect(open).toHaveBeenCalledWith('sideimpactor-ipa-v1');
+
+      const cached = await readCachedIpa('https://cdn.example.com/a.ipa');
+      expect(cached && [...new Uint8Array(cached)]).toEqual([9, 8, 7]);
+
+      await deleteCachedIpa('https://cdn.example.com/a.ipa');
+      expect(await readCachedIpa('https://cdn.example.com/a.ipa')).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('degrades gracefully when Cache Storage is unavailable', async () => {
+    vi.stubGlobal('caches', undefined);
+    try {
+      expect(await readCachedIpa('https://cdn.example.com/a.ipa')).toBeNull();
+      expect(await writeCachedIpa('https://cdn.example.com/a.ipa', new ArrayBuffer(1))).toBe(false);
+      await expect(deleteCachedIpa('https://cdn.example.com/a.ipa')).resolves.toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('returns null and false when the cache operations throw', async () => {
+    vi.stubGlobal('caches', {
+      open: async () => {
+        throw new Error('quota exceeded');
+      },
+    });
+    try {
+      expect(await readCachedIpa('https://cdn.example.com/a.ipa')).toBeNull();
+      expect(await writeCachedIpa('https://cdn.example.com/a.ipa', new ArrayBuffer(1))).toBe(false);
+      await expect(deleteCachedIpa('https://cdn.example.com/a.ipa')).resolves.toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

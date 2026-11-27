@@ -10,6 +10,7 @@ interface SignPageProps {
 
   remoteIpa?: RemoteIpaView | null;
   onRemoteInstall?: () => void;
+  onRemoteRedownload?: () => void;
   remoteInstallBusy?: boolean;
   remoteInstallDisabled?: boolean;
 
@@ -44,6 +45,7 @@ export function SignPage({
   onFileChange,
   remoteIpa,
   onRemoteInstall,
+  onRemoteRedownload,
   remoteInstallBusy = false,
   remoteInstallDisabled = false,
   accounts,
@@ -76,6 +78,7 @@ export function SignPage({
           onInstall={() => onRemoteInstall?.()}
           installBusy={remoteInstallBusy}
           installDisabled={remoteInstallDisabled}
+          onRedownload={onRemoteRedownload}
         />
       ) : null}
 

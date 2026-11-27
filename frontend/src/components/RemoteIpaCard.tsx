@@ -11,6 +11,7 @@ export interface RemoteIpaView {
   manualUrl: string | null;
   viaProxy: boolean;
   digestVerified: boolean;
+  fromCache: boolean;
 }
 
 interface RemoteIpaCardProps {
@@ -18,9 +19,16 @@ interface RemoteIpaCardProps {
   onInstall: () => void;
   installBusy: boolean;
   installDisabled: boolean;
+  onRedownload?: () => void;
 }
 
-export function RemoteIpaCard({ view, onInstall, installBusy, installDisabled }: RemoteIpaCardProps) {
+export function RemoteIpaCard({
+  view,
+  onInstall,
+  installBusy,
+  installDisabled,
+  onRedownload,
+}: RemoteIpaCardProps) {
   const showProgress = view.phase === 'downloading';
 
   return (
@@ -76,6 +84,20 @@ export function RemoteIpaCard({ view, onInstall, installBusy, installDisabled }:
             <span className="rounded-full bg-[var(--color-accent-soft)] px-2 py-0.5 font-medium text-accent">
               via public mirror
             </span>
+          ) : null}
+          {view.fromCache ? (
+            <span className="rounded-full bg-[var(--color-surface)] px-2 py-0.5 font-medium text-muted">
+              Cached
+            </span>
+          ) : null}
+          {view.fromCache && onRedownload ? (
+            <button
+              type="button"
+              onClick={onRedownload}
+              className="text-[11.5px] text-[var(--color-accent)] underline underline-offset-2 hover:no-underline"
+            >
+              Re-download
+            </button>
           ) : null}
         </div>
       ) : null}

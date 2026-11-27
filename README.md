@@ -24,6 +24,13 @@ Open the page with a fragment and the IPA is fetched automatically:
 After the download, **Install Now** signs and installs in one step (prompting for
 login and device pairing when needed).
 
+Completed downloads are kept in Cache Storage (`sideimpactor-ipa-v1`) keyed by the
+resolved asset URL, so reloading the page reuses the IPA instead of downloading it
+again; the card shows a **Cached** badge and a **Re-download** action. Verification
+is still enforced: a cached copy that fails the GitHub `sha256` digest is dropped
+and fetched again. Clearing site data removes the cache. Without Cache Storage
+(insecure context or private mode) it falls back to downloading normally.
+
 GitHub's release CDN does not allow cross-origin reads, so `#gh=` falls back to the
 public `https://gh-proxy.com/` mirror. The mirror is only used when GitHub reports a
 `sha256` digest for the asset, and the downloaded bytes are verified against it.
