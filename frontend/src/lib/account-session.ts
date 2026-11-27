@@ -27,6 +27,8 @@ export interface StoredAnisetteDataPayload {
   dateIso: string;
   locale: string;
   timeZone: string;
+  /** Anisette upstream that minted the GS token; signing must reuse it. */
+  upstream?: string;
 }
 
 export interface StoredAccountSessionPayload {
@@ -51,6 +53,7 @@ export function encodeAnisetteData(data: AnisetteData): StoredAnisetteDataPayloa
     dateIso: data.date.toISOString(),
     locale: data.locale,
     timeZone: data.timeZone,
+    upstream: data.upstream,
   };
 }
 
@@ -81,6 +84,7 @@ export function decodeAnisetteData(payload: StoredAnisetteDataPayload): Anisette
     date,
     locale: payload.locale,
     timeZone: payload.timeZone,
+    upstream: typeof payload.upstream === 'string' && payload.upstream ? payload.upstream : undefined,
   };
 }
 

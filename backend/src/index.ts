@@ -14,13 +14,20 @@ const APPLE_HOSTNAME_WHITELIST = [
  * Apple rejects identities provisioned by the Android CoreADI libraries inside
  * anisette-js (`finishMachineProvisioning` -> 401 / ec=-29003), so browsers now
  * take anisette headers from a Mac-side service. Upstreams are fixed here to
- * avoid turning this Worker into an open proxy. The SideStore-hosted v3 server
- * is preferred because its provisioning data is accepted by current GSA; the
- * legacy mac-ani instance stays as a fallback.
+ * avoid turning this Worker into an open proxy.
+ *
+ * Only servers with a STABLE machine identity belong here. A GS token is bound
+ * to the X-Apple-I-MD-M that minted it, so an upstream that provisions a fresh
+ * machine per request (new.ani.sidestore.io rotated through ~10 identities in
+ * 30 samples) makes every later developer-services call fail with 1100
+ * "session expired". Clients pin the host that served their login with
+ * `?upstream=<host>`; the order below is only the default for first logins.
  */
 const ANISETTE_UPSTREAMS = [
-  "https://new.ani.sidestore.io/",
   "https://mac-ani.jkcoxson.com/",
+  "https://ani.npeg.us/",
+  "https://anisette.crystall1ne.dev/",
+  "https://omni.ethxn.xyz/",
 ];
 
 const ANISETTE_TIMEOUT_MS = 8000;
@@ -373,8 +380,20 @@ async function handleAnisette(request: Request): Promise<Response> {
     });
   }
 
+  // The calling session remembers which upstream minted its GS token and asks
+  // for the same one, so the machine identity stays consistent across logins
+  // and later signing calls. Unknown hosts are ignored, not proxied.
+  const requestedHost = (new URL(request.url).searchParams.get("upstream") || "").trim().toLowerCase();
+  const upstreams = [...ANISETTE_UPSTREAMS];
+  if (requestedHost) {
+    const index = upstreams.findIndex((upstream) => new URL(upstream).host === requestedHost);
+    if (index > 0) {
+      upstreams.unshift(upstreams.splice(index, 1)[0]);
+    }
+  }
+
   // Every attempt returns a fresh one-time password, so responses are never cached.
-  for (const upstream of ANISETTE_UPSTREAMS) {
+  for (const upstream of upstreams) {
     try {
       const response = await fetch(upstream, {
         headers: { accept: "application/json" },

@@ -161,6 +161,25 @@ describe('getAnisetteData', () => {
     });
   });
 
+  it('pins the requested upstream and records which host served it', async () => {
+    fetchMock().mockResolvedValue(
+      new Response(JSON.stringify(REMOTE_HEADERS), {
+        status: 200,
+        headers: {
+          'content-type': 'application/json',
+          'x-anisette-upstream': 'ani.npeg.us',
+        },
+      }),
+    );
+
+    const data = await getAnisetteData('ani.npeg.us');
+
+    const requested = new URL(String(fetchMock().mock.calls[0][0]));
+    expect(requested.origin + requested.pathname).toBe(`${location.origin}/anisette`);
+    expect(requested.searchParams.get('upstream')).toBe('ani.npeg.us');
+    expect(data.upstream).toBe('ani.npeg.us');
+  });
+
   it('reports HTTP failures with the endpoint', async () => {
     fetchMock().mockResolvedValue(jsonResponse({ error: 'boom' }, 502));
     await expect(getAnisetteData()).rejects.toThrow(/Anisette service failed: HTTP 502/);

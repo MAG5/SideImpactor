@@ -43,8 +43,14 @@ export interface AppleSigningResult {
   teamId: string;
 }
 
+/**
+ * altsign only needs the Apple header values, but the app also tracks which
+ * relay upstream minted them so later calls can be pinned to the same machine.
+ */
+export type SessionAnisetteData = AnisetteData & { upstream?: string };
+
 export interface AppleDeveloperSession {
-  anisetteData: AnisetteData;
+  anisetteData: SessionAnisetteData;
   dsid: string;
   authToken: string;
 }

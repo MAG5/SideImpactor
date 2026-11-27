@@ -89,6 +89,12 @@ function resolvePageFromHash(hash: string): AppPage {
   return pageFromHash(hash) ?? (parseIpaSource(hash) ? 'sign' : 'login');
 }
 
+/** Apple answers 1100 when the GS token no longer matches the session. */
+function isExpiredSessionError(error: unknown): boolean {
+  const message = formatError(error);
+  return /\b1100\b/.test(message) || /session has expired/i.test(message);
+}
+
 function pageToHash(page: AppPage): string {
   return page === 'sign' ? SIGN_PAGE_HASH : LOGIN_PAGE_HASH;
 }
@@ -557,6 +563,27 @@ export function App() {
   }, [runPairFlow]);
 
   // ---- remote one-click sign + install ----
+  // A GS token only works with the anisette machine that minted it, so every
+  // signed-in account pins the relay upstream it logged in through.
+  const expireAccountSession = useCallback(
+    (context: AppleDeveloperContext) => {
+      const key = accountKey(context.appleId, context.team.identifier);
+      removeStoredAccountSession(context.appleId, context.team.identifier);
+      accountContextMapRef.current.delete(key);
+      setAccountCacheVersion((v) => v + 1);
+      setLoginContext((current) =>
+        current && accountKey(current.appleId, current.team.identifier) === key ? null : current,
+      );
+      setAppleId(context.appleId);
+      saveText(APPLE_ID_STORAGE_KEY, context.appleId);
+      setPassword('');
+      setLoginError('Apple expired this session. Sign in again to continue.');
+      setLoginModalOpen(true);
+      addLog(`session expired for ${context.appleId} / ${context.team.identifier}, please sign in again`);
+    },
+    [addLog],
+  );
+
   const startRemoteInstall = useCallback(
     async (file: File, context: AppleDeveloperContext) => {
       if (busyRef.current.sign || busyRef.current.install || busyRef.current.pair) return;
@@ -597,7 +624,10 @@ export function App() {
 
         setBusy((prev) => ({ ...prev, install: false, sign: true }));
         addLog('remote install: signing ipa...');
-        const { anisetteData: nextAnisette } = await ensureAnisetteData(addLog);
+        const { anisetteData: nextAnisette } = await ensureAnisetteData(
+          addLog,
+          context.session.anisetteData.upstream,
+        );
         setAnisetteData(nextAnisette);
         setAnisetteProvisioned(true);
 
@@ -625,12 +655,15 @@ export function App() {
         setProgress({ percent: 100, status: 'complete' });
       } catch (error) {
         addLog(`remote install failed: ${formatError(error)}`);
+        if (isExpiredSessionError(error)) {
+          expireAccountSession(context);
+        }
         setProgress({ percent: 0, status: 'failed' });
       } finally {
         setBusy((prev) => ({ ...prev, sign: false, install: false }));
       }
     },
-    [addLog, anisetteData, pairedDeviceInfo, runPairFlow],
+    [addLog, anisetteData, expireAccountSession, pairedDeviceInfo, runPairFlow],
   );
 
   // ---- login flow ----
@@ -744,7 +777,10 @@ export function App() {
     lastInstallPercentRef.current = 0;
 
     try {
-      const { anisetteData: nextAnisette } = await ensureAnisetteData(addLog);
+      const { anisetteData: nextAnisette } = await ensureAnisetteData(
+        addLog,
+        loginContext.session.anisetteData.upstream,
+      );
       setAnisetteData(nextAnisette);
       setAnisetteProvisioned(true);
 
@@ -770,11 +806,22 @@ export function App() {
       setProgress({ percent: 100, status: 'complete' });
     } catch (error) {
       addLog(`sign failed: ${formatError(error)}`);
+      if (isExpiredSessionError(error)) {
+        expireAccountSession(loginContext);
+      }
       setProgress({ percent: 0, status: 'failed' });
     } finally {
       setBusy((prev) => ({ ...prev, sign: false }));
     }
-  }, [addLog, anisetteData, loginContext, pairedDeviceInfo, selectedIpaFile, selectedTargetUdid]);
+  }, [
+    addLog,
+    anisetteData,
+    expireAccountSession,
+    loginContext,
+    pairedDeviceInfo,
+    selectedIpaFile,
+    selectedTargetUdid,
+  ]);
 
   // ---- install flow ----
   const handleInstall = useCallback(async () => {

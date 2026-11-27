@@ -69,6 +69,14 @@ describe('encode/decodeAnisetteData', () => {
     expect(decoded?.date.getTime()).toBe(sampleAnisette.date.getTime());
   });
 
+  it('keeps the pinned anisette upstream so signing reuses the same machine', () => {
+    const encoded = encodeAnisetteData({ ...sampleAnisette, upstream: 'ani.npeg.us' });
+    expect(encoded.upstream).toBe('ani.npeg.us');
+    expect(decodeAnisetteData(encoded)?.upstream).toBe('ani.npeg.us');
+    // Sessions stored before upstream pinning still decode, just without a pin.
+    expect(decodeAnisetteData(encodeAnisetteData(sampleAnisette))?.upstream).toBeUndefined();
+  });
+
   it('defaults a missing serial number to "0"', () => {
     const encoded: StoredAnisetteDataPayload = {
       ...encodeAnisetteData(sampleAnisette),

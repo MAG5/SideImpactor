@@ -12,6 +12,8 @@ export interface AnisetteData {
   date: Date;
   locale: string;
   timeZone: string;
+  /** Relay upstream that minted these headers; GS tokens are bound to it. */
+  upstream?: string;
 }
 
 /**
@@ -74,11 +76,17 @@ export function toAnisetteData(headers: AnisetteHeaders, deviceDescription = get
   };
 }
 
-export async function getAnisetteData(): Promise<AnisetteData> {
+export async function getAnisetteData(preferredUpstream?: string): Promise<AnisetteData> {
   const endpoint = getAnisetteEndpoint();
+  let url = endpoint;
+  if (preferredUpstream) {
+    const parsed = new URL(endpoint);
+    parsed.searchParams.set('upstream', preferredUpstream);
+    url = parsed.toString();
+  }
   let response: Response;
   try {
-    response = await fetch(endpoint, {
+    response = await fetch(url, {
       headers: { accept: 'application/json' },
       cache: 'no-store',
     });
@@ -105,13 +113,14 @@ export async function getAnisetteData(): Promise<AnisetteData> {
   }
 
   const data = toAnisetteData(payload as AnisetteHeaders);
+  const upstream = response.headers.get('x-anisette-upstream') ?? preferredUpstream ?? undefined;
   // The MID must stay constant across a login; a rotating one makes Apple
   // treat the post-2FA retry as a new device and re-prompt for a code.
   console.info(
     '[anisette] upstream=%s MID=%s MD=%s...',
-    response.headers.get('x-anisette-upstream') ?? '(none)',
+    upstream ?? '(none)',
     data.machineID,
     data.oneTimePassword.slice(0, 8),
   );
-  return data;
+  return { ...data, upstream };
 }

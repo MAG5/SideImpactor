@@ -43,11 +43,21 @@ build-time default.
 Apple's GSA endpoints need anisette headers (machine ID + one-time password) for
 every login request. They are fetched over HTTP from the relay's `/anisette`
 route, which forwards to a Mac-side anisette server. The Worker is not an open
-proxy: the upstream list is fixed to `new.ani.sidestore.io` (preferred) with
-`mac-ani.jkcoxson.com` as fallback, and a response missing the required
-`X-Apple-*` headers is rejected before it reaches the browser. Both are
+proxy: the upstream list is fixed to `mac-ani.jkcoxson.com`, `ani.npeg.us`,
+`anisette.crystall1ne.dev` and `omni.ethxn.xyz`, and a response missing the
+required `X-Apple-*` headers is rejected before it reaches the browser. All are
 third-party services — they receive Apple's lookup request but never your Apple
 ID password, and the password is only sent to Apple over the WISP connection.
+
+Only servers with a **stable** machine identity are listed. A GS token is bound
+to the `X-Apple-I-MD-M` that minted it, so a rotating upstream (the v3
+`new.ani.sidestore.io` provisions a fresh machine per request) makes every later
+developer-services call fail with 1100 "session expired". The browser therefore
+stores the host that served its login (`x-anisette-upstream`, persisted with the
+session) and passes `?upstream=<host>` on every later fetch, which the Worker
+tries first. If the pinned server is down and another one answers, the identity
+changes and the app asks you to sign in again. Sessions saved before pinning
+existed must be re-created once.
 
 The browser always requests a fresh header set (OTPs are single-use). The device
 identity sent to Apple comes from the browser, not the upstream: it claims
@@ -62,13 +72,11 @@ localStorage.setItem('webmuxd:anisette-url', 'https://your-relay.example/anisett
 localStorage.setItem('webmuxd:anisette-client-info', '<MacBookPro13,3> <Mac OS X;26.6;25F84> ...');
 ```
 
-The relay also sets `x-anisette-upstream` on `/anisette` responses so you can see
-which server minted the headers.
-
 `VITE_ANISETTE_URL` sets the build-time endpoint; otherwise it is derived from
 `VITE_WISP_URL` (same host, path `/anisette`). Self-hosted relays must implement
-the route: `GET /anisette` returns the anisette JSON headers with
-`Access-Control-Allow-Origin`, and `OPTIONS` answers 204.
+the route: `GET /anisette[?upstream=<host>]` returns the anisette JSON headers
+with `Access-Control-Allow-Origin` plus `Access-Control-Expose-Headers:
+x-anisette-upstream`, and `OPTIONS` answers 204.
 
 ## Project Structure
 

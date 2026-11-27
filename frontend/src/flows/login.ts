@@ -29,13 +29,18 @@ export interface EnsureAnisetteResult {
 
 export async function ensureAnisetteData(
   log: (msg: string) => void,
+  preferredUpstream?: string,
 ): Promise<EnsureAnisetteResult> {
   const anisetteService = await loadAnisetteService();
   log('login: fetching anisette headers...');
   // OTPs are single-use, so always take a fresh set instead of reusing a
   // stored one (reuse makes Apple reject the request with -22421).
-  const anisetteData = await anisetteService.getAnisetteData();
-  log(`login: anisette ready (${shortToken(anisetteData.machineID)})`);
+  const anisetteData = await anisetteService.getAnisetteData(preferredUpstream);
+  log(
+    `login: anisette ready (${shortToken(anisetteData.machineID)}${
+      anisetteData.upstream ? ` via ${anisetteData.upstream}` : ''
+    })`,
+  );
   return { anisetteData, provisioned: true };
 }
 
