@@ -6,6 +6,7 @@ import {
   downloadIpaBytes,
   IpaDownloadError,
   ipaFileName,
+  ipaSourceQuery,
   parseIpaSource,
   proxyDownloadUrl,
   readCachedIpa,
@@ -47,6 +48,22 @@ describe('parseIpaSource', () => {
     expect(parseIpaSource('#/login')).toBeNull();
     expect(parseIpaSource('#ipa=javascript:alert(1)')).toBeNull();
     expect(parseIpaSource('')).toBeNull();
+  });
+
+  it('parses the source out of a route query', () => {
+    expect(parseIpaSource('#/sign?gh=mag5/ipa-releases@v1.2.3')?.label).toBe('mag5/ipa-releases@v1.2.3');
+    expect(parseIpaSource('#/login?ipa=https%3A%2F%2Fcdn.example.com%2Fapp.ipa')?.kind).toBe('url');
+  });
+});
+
+describe('ipaSourceQuery', () => {
+  it('round-trips through parseIpaSource', () => {
+    const github = { kind: 'github' as const, owner: 'mag5', repo: 'ipa-releases', label: 'mag5/ipa-releases' };
+    expect(parseIpaSource(`#/sign?${ipaSourceQuery(github)}`)).toEqual(github);
+    const tagged = { ...github, tag: 'v1.2.3', label: 'mag5/ipa-releases@v1.2.3' };
+    expect(parseIpaSource(`#/sign?${ipaSourceQuery(tagged)}`)).toEqual(tagged);
+    const url = { kind: 'url' as const, url: 'https://cdn.example.com/app.ipa', label: 'app.ipa' };
+    expect(parseIpaSource(`#/login?${ipaSourceQuery(url)}`)).toEqual(url);
   });
 });
 

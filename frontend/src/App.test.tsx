@@ -239,6 +239,30 @@ describe('App — remote ipa', () => {
     }
   });
 
+  it('keeps the ipa source in the hash across page changes', async () => {
+    const payload = new Uint8Array([2, 4, 6]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(payload, { status: 200, headers: { 'content-length': String(payload.byteLength) } }),
+      ),
+    );
+    window.location.hash = '#ipa=https://cdn.example.com/app.ipa';
+
+    try {
+      render(<App />);
+      expect(await screen.findByText('Remote IPA')).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole('button', { name: 'Account' }));
+      expect(window.location.hash).toBe('#/login?ipa=https%3A%2F%2Fcdn.example.com%2Fapp.ipa');
+
+      await userEvent.click(screen.getByRole('button', { name: /Sign & Install/ }));
+      expect(window.location.hash).toBe('#/sign?ipa=https%3A%2F%2Fcdn.example.com%2Fapp.ipa');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('reuses a cached download across reloads without fetching again', async () => {
     const payload = new Uint8Array([5, 6, 7, 8]);
     const cacheStub = {
@@ -258,6 +282,32 @@ describe('App — remote ipa', () => {
 
       expect(await screen.findByText('Cached')).toBeInTheDocument();
       expect(await screen.findByRole('button', { name: 'Install Now' })).toBeEnabled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('restores the ipa after a refresh of a route-persisted link', async () => {
+    const payload = new Uint8Array([1, 3, 5]);
+    const cacheStub = {
+      match: async () => new Response(payload, { status: 200 }),
+      put: async () => {},
+      delete: async () => true,
+    };
+    vi.stubGlobal('caches', { open: async () => cacheStub });
+    const fetchSpy = vi.fn(async () => {
+      throw new Error('asset should come from cache');
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    window.location.hash = '#/sign?ipa=https%3A%2F%2Fcdn.example.com%2Fapp.ipa';
+
+    try {
+      render(<App />);
+
+      expect(await screen.findByText('Cached')).toBeInTheDocument();
+      expect(await screen.findByRole('button', { name: 'Install Now' })).toBeEnabled();
+      expect(window.location.hash).toBe('#/sign?ipa=https%3A%2F%2Fcdn.example.com%2Fapp.ipa');
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();

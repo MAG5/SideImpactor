@@ -31,8 +31,18 @@ function safeDecode(value: string): string {
   }
 }
 
+/**
+ * Accepts both legacy hashes (`#gh=owner/repo`, `#ipa=<url>`) and the route
+ * form (`#/sign?gh=owner/repo`, `#/login?ipa=<url>`) used to keep the source
+ * in the URL across page changes.
+ */
 export function parseIpaSource(hash: string): IpaSource | null {
-  const raw = hash.startsWith('#') ? hash.slice(1) : hash;
+  let raw = hash.startsWith('#') ? hash.slice(1) : hash;
+  if (raw.startsWith('/')) {
+    const queryStart = raw.indexOf('?');
+    if (queryStart < 0) return null;
+    raw = raw.slice(queryStart + 1);
+  }
   const eq = raw.indexOf('=');
   if (eq <= 0) return null;
   const key = raw.slice(0, eq).toLowerCase();
@@ -66,6 +76,15 @@ export function parseIpaSource(hash: string): IpaSource | null {
   }
 
   return null;
+}
+
+/** Serializes a source into the route query that `parseIpaSource` understands. */
+export function ipaSourceQuery(source: IpaSource): string {
+  if (source.kind === 'github') {
+    const repo = source.tag ? `${source.owner}/${source.repo}@${source.tag}` : `${source.owner}/${source.repo}`;
+    return `gh=${encodeURIComponent(repo)}`;
+  }
+  return `ipa=${encodeURIComponent(source.url)}`;
 }
 
 interface GithubReleaseJson {

@@ -32,6 +32,7 @@ import {
   downloadIpaBytes,
   IpaDownloadError,
   ipaFileName,
+  ipaSourceQuery,
   parseIpaSource,
   proxyDownloadUrl,
   readCachedIpa,
@@ -74,9 +75,18 @@ type PairFlowResult =
 
 const idleBusy: BusyState = { pair: false, loginSign: false, sign: false, install: false };
 
+function pageFromHash(hash: string): AppPage | null {
+  if (hash === SIGN_PAGE_HASH || hash.startsWith(`${SIGN_PAGE_HASH}?`)) return 'sign';
+  if (hash === LOGIN_PAGE_HASH || hash.startsWith(`${LOGIN_PAGE_HASH}?`)) return 'login';
+  return null;
+}
+
+function isKnownHash(hash: string): boolean {
+  return pageFromHash(hash) !== null || parseIpaSource(hash) !== null;
+}
+
 function resolvePageFromHash(hash: string): AppPage {
-  if (parseIpaSource(hash)) return 'sign';
-  return hash === SIGN_PAGE_HASH ? 'sign' : 'login';
+  return pageFromHash(hash) ?? (parseIpaSource(hash) ? 'sign' : 'login');
 }
 
 function pageToHash(page: AppPage): string {
@@ -191,18 +201,16 @@ export function App() {
   // ---- navigation ----
   const navigateToPage = useCallback((page: AppPage) => {
     setCurrentPage(page);
-    const nextHash = pageToHash(page);
+    // Keep the active remote source in the URL so a refresh still has it.
+    const source = remoteSourceRef.current;
+    const nextHash = source ? `${pageToHash(page)}?${ipaSourceQuery(source)}` : pageToHash(page);
     if (window.location.hash !== nextHash) {
       window.location.hash = nextHash;
     }
   }, []);
 
   useEffect(() => {
-    if (
-      window.location.hash !== LOGIN_PAGE_HASH &&
-      window.location.hash !== SIGN_PAGE_HASH &&
-      !parseIpaSource(window.location.hash)
-    ) {
+    if (!isKnownHash(window.location.hash)) {
       window.location.hash = LOGIN_PAGE_HASH;
     }
     const onHashChange = () => {
@@ -296,6 +304,8 @@ export function App() {
         remoteDownloadedFileRef.current = null;
       }
       handleFileChange(null);
+      // Remember the source immediately so a route change mid-download keeps it in the URL.
+      remoteSourceRef.current = source;
 
       setRemoteIpa({
         label: source.label,
@@ -320,7 +330,6 @@ export function App() {
         }
 
         const target = asset;
-        remoteSourceRef.current = source;
         remoteAssetUrlRef.current = target.url;
         const sizeLabel = target.size > 0 ? formatFileSize(target.size) : null;
         setRemoteIpa((prev) =>
@@ -439,14 +448,16 @@ export function App() {
     [addLog, handleFileChange],
   );
 
-  const loadedRemoteHashRef = useRef<string | null>(null);
+  // Keyed by the source (not the raw hash) so navigating between
+  // #/login?gh=… and #/sign?gh=… does not restart the download.
+  const loadedSourceKeyRef = useRef<string | null>(null);
   useEffect(() => {
     const tryLoad = () => {
-      const hash = window.location.hash;
-      const source = parseIpaSource(hash);
-      if (!source || loadedRemoteHashRef.current === hash) return;
-      loadedRemoteHashRef.current = hash;
-      setCurrentPage('sign');
+      const source = parseIpaSource(window.location.hash);
+      if (!source) return;
+      const key = ipaSourceQuery(source);
+      if (loadedSourceKeyRef.current === key) return;
+      loadedSourceKeyRef.current = key;
       void loadRemoteIpa(source);
     };
 
