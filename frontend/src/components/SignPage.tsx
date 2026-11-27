@@ -1,11 +1,17 @@
 import { Button } from './ui/Button';
 import { DropZone } from './DropZone';
 import { DevicePicker } from './DevicePicker';
+import { RemoteIpaCard, type RemoteIpaView } from './RemoteIpaCard';
 import type { StoredAccountSummary } from '../lib/account-session';
 
 interface SignPageProps {
   file: File | null;
   onFileChange: (file: File | null) => void;
+
+  remoteIpa?: RemoteIpaView | null;
+  onRemoteInstall?: () => void;
+  remoteInstallBusy?: boolean;
+  remoteInstallDisabled?: boolean;
 
   accounts: StoredAccountSummary[];
   activeAccountKey: string | null;
@@ -36,6 +42,10 @@ function accountKey(s: StoredAccountSummary): string {
 export function SignPage({
   file,
   onFileChange,
+  remoteIpa,
+  onRemoteInstall,
+  remoteInstallBusy = false,
+  remoteInstallDisabled = false,
   accounts,
   activeAccountKey,
   onAccountChange,
@@ -59,6 +69,15 @@ export function SignPage({
         <h1 className="text-[clamp(1.75rem,3.5vw,2.1rem)] font-semibold tracking-tight text-ink">Sign &amp; Install</h1>
         <p className="mt-2 text-[14.5px] text-muted">Drop an .ipa, then sign and install onto your paired device.</p>
       </div>
+
+      {remoteIpa ? (
+        <RemoteIpaCard
+          view={remoteIpa}
+          onInstall={() => onRemoteInstall?.()}
+          installBusy={remoteInstallBusy}
+          installDisabled={remoteInstallDisabled}
+        />
+      ) : null}
 
       <DropZone file={file} onFileChange={onFileChange} />
 

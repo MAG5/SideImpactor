@@ -25,8 +25,21 @@ import {
   saveText,
   writeJson,
 } from './lib/storage';
-import { accountKey, buildPreparedSourceKey, formatError } from './lib/ids';
+import { accountKey, buildPreparedSourceKey, formatError, formatFileSize } from './lib/ids';
 import { listKnownDeviceUdids } from './lib/pair-record';
+import {
+  downloadIpaBytes,
+  IpaDownloadError,
+  ipaFileName,
+  parseIpaSource,
+  proxyDownloadUrl,
+  resolveGithubIpaAsset,
+  sha256Hex,
+  digestMatches,
+  type IpaSource,
+  type RemoteIpaAsset,
+} from './lib/remote-ipa';
+import type { RemoteIpaView } from './components/RemoteIpaCard';
 import {
   loadStoredAccountList,
   loadStoredAccountSummary,
@@ -59,6 +72,7 @@ type PairFlowResult =
 const idleBusy: BusyState = { pair: false, loginSign: false, sign: false, install: false };
 
 function resolvePageFromHash(hash: string): AppPage {
+  if (parseIpaSource(hash)) return 'sign';
   return hash === SIGN_PAGE_HASH ? 'sign' : 'login';
 }
 
@@ -99,6 +113,9 @@ export function App() {
   // File + signing
   const [selectedIpaFile, setSelectedIpaFile] = useState<File | null>(null);
   const [prepared, setPrepared] = useState<{ file: File; sourceKey: string } | null>(null);
+  const [remoteIpa, setRemoteIpa] = useState<RemoteIpaView | null>(null);
+  const pendingInstallFileRef = useRef<File | null>(null);
+  const remoteDownloadedFileRef = useRef<File | null>(null);
 
   // Anisette
   const [anisetteData, setAnisetteData] = useState<AnisetteData | null>(null);
@@ -176,7 +193,11 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (window.location.hash !== LOGIN_PAGE_HASH && window.location.hash !== SIGN_PAGE_HASH) {
+    if (
+      window.location.hash !== LOGIN_PAGE_HASH &&
+      window.location.hash !== SIGN_PAGE_HASH &&
+      !parseIpaSource(window.location.hash)
+    ) {
       window.location.hash = LOGIN_PAGE_HASH;
     }
     const onHashChange = () => {
@@ -240,6 +261,10 @@ export function App() {
 
   const handleFileChange = useCallback(
     (file: File | null) => {
+      if (remoteDownloadedFileRef.current && file !== remoteDownloadedFileRef.current) {
+        remoteDownloadedFileRef.current = null;
+        setRemoteIpa(null);
+      }
       setSelectedIpaFile(file);
       clearPrepared();
       if (file) {
@@ -250,6 +275,154 @@ export function App() {
     },
     [addLog, clearPrepared],
   );
+
+  // ---- remote ipa (#ipa=<url> or #gh=<owner>/<repo>[@tag]) ----
+  const loadRemoteIpa = useCallback(
+    async (source: IpaSource) => {
+      const urlHost = (value: string) => {
+        try {
+          return new URL(value).hostname;
+        } catch {
+          return value;
+        }
+      };
+
+      if (remoteDownloadedFileRef.current) {
+        remoteDownloadedFileRef.current = null;
+      }
+      handleFileChange(null);
+
+      setRemoteIpa({
+        label: source.label,
+        phase: 'resolving',
+        detail: source.kind === 'github' ? 'Looking up the latest release on GitHub…' : 'Starting download…',
+        percent: null,
+        error: null,
+        manualUrl: null,
+        viaProxy: false,
+        digestVerified: false,
+      });
+      addLog(`remote ipa: ${source.label}`);
+
+      let asset: RemoteIpaAsset | null = null;
+      try {
+        if (source.kind === 'github') {
+          asset = await resolveGithubIpaAsset(source);
+          addLog(`remote ipa: release ${asset.releaseTag || '(untagged)'} -> ${asset.name}`);
+        } else {
+          asset = { name: ipaFileName('', source.url), url: source.url, size: 0, digest: null, releaseTag: '' };
+        }
+
+        const target = asset;
+        const sizeLabel = target.size > 0 ? formatFileSize(target.size) : null;
+        setRemoteIpa((prev) =>
+          prev
+            ? {
+                ...prev,
+                phase: 'downloading',
+                detail:
+                  source.kind === 'github'
+                    ? `${target.releaseTag ? `release ${target.releaseTag} · ` : ''}${sizeLabel ?? target.name}`
+                    : `${urlHost(target.url)}${sizeLabel ? ` · ${sizeLabel}` : ''}`,
+              }
+            : prev,
+        );
+
+        let lastPercent = -1;
+        const onProgress = ({ loaded, total }: { loaded: number; total: number }) => {
+          if (total <= 0) return;
+          const percent = Math.min(99, Math.floor((loaded / total) * 100));
+          if (percent === lastPercent) return;
+          lastPercent = percent;
+          setRemoteIpa((prev) => (prev ? { ...prev, percent } : prev));
+        };
+
+        let buffer: ArrayBuffer;
+        let viaProxy = false;
+        try {
+          buffer = await downloadIpaBytes(target.url, { onProgress });
+        } catch (error) {
+          const mirrored =
+            error instanceof IpaDownloadError && error.corsBlocked && target.digest
+              ? proxyDownloadUrl(target.url)
+              : null;
+          if (!mirrored) throw error;
+          viaProxy = true;
+          addLog('remote ipa: direct download blocked by CORS, retrying through the public mirror');
+          setRemoteIpa((prev) => (prev ? { ...prev, viaProxy: true, percent: null } : prev));
+          buffer = await downloadIpaBytes(mirrored, { onProgress });
+        }
+
+        let digestVerified = false;
+        if (target.digest) {
+          const hex = await sha256Hex(buffer);
+          if (!digestMatches(target.digest, hex)) {
+            throw new Error(
+              `sha256 mismatch (expected ${target.digest.slice(7, 19)}…, got ${hex.slice(0, 12)}…), download discarded`,
+            );
+          }
+          digestVerified = true;
+        }
+
+        const file = new File([buffer], ipaFileName(target.name, target.url), {
+          type: 'application/octet-stream',
+        });
+        remoteDownloadedFileRef.current = file;
+        handleFileChange(file);
+        setRemoteIpa({
+          label: source.label,
+          phase: 'ready',
+          detail: `${file.name} · ${formatFileSize(file.size)}`,
+          percent: 100,
+          error: null,
+          manualUrl: null,
+          viaProxy,
+          digestVerified,
+        });
+        addLog(
+          `remote ipa: downloaded ${file.name} (${formatFileSize(file.size)})${
+            digestVerified ? ', sha256 verified' : ''
+          }${viaProxy ? ' via mirror' : ''}`,
+        );
+      } catch (error) {
+        const corsBlocked = error instanceof IpaDownloadError && error.corsBlocked;
+        const manualUrl = asset?.url ?? (source.kind === 'url' ? source.url : null);
+        let message = formatError(error);
+        if (corsBlocked && manualUrl && manualUrl.includes('github.com/')) {
+          message +=
+            ' For GitHub releases use #gh=<owner>/<repo> instead: it resolves the latest .ipa and verifies its sha256 digest.';
+        }
+        setRemoteIpa({
+          label: source.label,
+          phase: 'error',
+          detail: corsBlocked ? 'Download blocked' : 'Download failed',
+          percent: null,
+          error: message,
+          manualUrl,
+          viaProxy: false,
+          digestVerified: false,
+        });
+        addLog(`remote ipa failed: ${message}`);
+      }
+    },
+    [addLog, handleFileChange],
+  );
+
+  const loadedRemoteHashRef = useRef<string | null>(null);
+  useEffect(() => {
+    const tryLoad = () => {
+      const hash = window.location.hash;
+      const source = parseIpaSource(hash);
+      if (!source || loadedRemoteHashRef.current === hash) return;
+      loadedRemoteHashRef.current = hash;
+      setCurrentPage('sign');
+      void loadRemoteIpa(source);
+    };
+
+    tryLoad();
+    window.addEventListener('hashchange', tryLoad);
+    return () => window.removeEventListener('hashchange', tryLoad);
+  }, [loadRemoteIpa]);
 
   const handleSelectedUdidChange = useCallback(
     (value: string) => {
@@ -330,6 +503,83 @@ export function App() {
     });
   }, [runPairFlow]);
 
+  // ---- remote one-click sign + install ----
+  const startRemoteInstall = useCallback(
+    async (file: File, context: AppleDeveloperContext) => {
+      if (busyRef.current.sign || busyRef.current.install || busyRef.current.pair) return;
+
+      setBusy((prev) => ({ ...prev, install: true }));
+      setProgress({ percent: 0, status: 'starting' });
+      lastInstallPercentRef.current = 0;
+
+      try {
+        const client = await ensureClientSelected({
+          log: addLog,
+          clientRef: directClientRef,
+          onStateChange: () => {},
+          onTrustPending: () => setTrustState('pending'),
+        });
+        let targetUdid = pairedDeviceInfo?.udid ?? null;
+        if (!client.isSessionStarted) {
+          const pairResult = await runPairFlow({
+            showSuccess: false,
+            startLogMessage: 'install: device trust required, continue on your device',
+          });
+          if (pairResult.kind === 'pending') {
+            addLog('install paused: finish trusting the device, then install again');
+            setProgress({ percent: 0, status: 'idle' });
+            return;
+          }
+          if (pairResult.kind === 'failed') {
+            setProgress({ percent: 0, status: 'failed' });
+            return;
+          }
+          targetUdid = pairResult.info.udid;
+        }
+        if (!targetUdid) {
+          throw new Error('no paired device selected');
+        }
+        setSelectedTargetUdid(targetUdid);
+        saveText(SELECTED_DEVICE_UDID_STORAGE_KEY, targetUdid);
+
+        setBusy((prev) => ({ ...prev, install: false, sign: true }));
+        addLog('remote install: signing ipa...');
+        const { anisetteData: nextAnisette } = await ensureAnisetteData(anisetteData, addLog);
+        setAnisetteData(nextAnisette);
+        setAnisetteProvisioned(true);
+
+        const result = await signIpaFlow({
+          ipaFile: file,
+          context,
+          anisetteData: nextAnisette,
+          deviceUdid: targetUdid,
+          deviceName: pairedDeviceInfo?.udid === targetUdid ? pairedDeviceInfo.name ?? undefined : undefined,
+          log: addLog,
+        });
+
+        const key = accountKey(result.context.appleId, result.context.team.identifier);
+        accountContextMapRef.current.set(key, result.context);
+        persistAccountSummary(result.context);
+        persistAccountSession(result.context, nextAnisette);
+        setSavedAccounts(loadStoredAccountList());
+        setLoginContext(result.context);
+        setPrepared({ file: result.signedFile, sourceKey: buildPreparedSourceKey(file, targetUdid) });
+
+        setBusy((prev) => ({ ...prev, sign: false, install: true }));
+        setProgress({ percent: 0, status: 'starting' });
+        lastInstallPercentRef.current = 0;
+        await installFlow({ client, signedFile: result.signedFile, log: addLog });
+        setProgress({ percent: 100, status: 'complete' });
+      } catch (error) {
+        addLog(`remote install failed: ${formatError(error)}`);
+        setProgress({ percent: 0, status: 'failed' });
+      } finally {
+        setBusy((prev) => ({ ...prev, sign: false, install: false }));
+      }
+    },
+    [addLog, anisetteData, pairedDeviceInfo, runPairFlow],
+  );
+
   // ---- login flow ----
   const handleLogin = useCallback(async () => {
     if (busyRef.current.loginSign) return;
@@ -384,6 +634,12 @@ export function App() {
       clearPrepared();
       addLog('login: done, navigating to sign page');
       navigateToPage('sign');
+
+      const pendingFile = pendingInstallFileRef.current;
+      if (pendingFile) {
+        pendingInstallFileRef.current = null;
+        void startRemoteInstall(pendingFile, context);
+      }
     } catch (error) {
       console.error('[login] caught error:', error);
       const msg = formatError(error);
@@ -403,7 +659,7 @@ export function App() {
       }
       setBusy((prev) => ({ ...prev, loginSign: false }));
     }
-  }, [addLog, anisetteData, appleId, clearPrepared, navigateToPage, password]);
+  }, [addLog, anisetteData, appleId, clearPrepared, navigateToPage, password, startRemoteInstall]);
 
   const handleTwoFactorCancel = useCallback(() => {
     const ctx = twoFactor.ctx;
@@ -520,6 +776,20 @@ export function App() {
       setBusy((prev) => ({ ...prev, install: false }));
     }
   }, [addLog, pairedDeviceInfo, prepared, runPairFlow, selectedIpaFile, selectedTargetUdid]);
+
+  const handleRemoteInstall = useCallback(() => {
+    const file = selectedIpaFile;
+    if (!file) return;
+    if (!loginContext) {
+      pendingInstallFileRef.current = file;
+      setPassword('');
+      setLoginError(null);
+      setLoginModalOpen(true);
+      addLog('remote install: sign in to continue');
+      return;
+    }
+    void startRemoteInstall(file, loginContext);
+  }, [addLog, loginContext, selectedIpaFile, startRemoteInstall]);
 
   // ---- switch account ----
   const handleSwitchAccount = useCallback(
@@ -639,6 +909,12 @@ export function App() {
           <SignPage
             file={selectedIpaFile}
             onFileChange={handleFileChange}
+            remoteIpa={remoteIpa}
+            onRemoteInstall={handleRemoteInstall}
+            remoteInstallBusy={busy.sign || busy.install}
+            remoteInstallDisabled={
+              !selectedIpaFile || busy.pair || busy.loginSign || busy.sign || busy.install
+            }
             accounts={savedAccounts}
             activeAccountKey={activeAccountKey}
             onAccountChange={(key) => {
@@ -664,7 +940,11 @@ export function App() {
 
       <LoginModal
         open={loginModalOpen}
-        onClose={() => { setLoginModalOpen(false); setLoginError(null); }}
+        onClose={() => {
+          setLoginModalOpen(false);
+          setLoginError(null);
+          pendingInstallFileRef.current = null;
+        }}
         appleId={appleId}
         password={password}
         busyLoginSign={busy.loginSign}

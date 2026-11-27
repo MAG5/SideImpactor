@@ -11,6 +11,26 @@ bun run dev
 
 Open `http://localhost:5173`.
 
+## Remote IPA links
+
+Open the page with a fragment and the IPA is fetched automatically:
+
+| Link | Behavior |
+|---|---|
+| `#ipa=https://host/App.ipa` | Downloads directly. The host must send `Access-Control-Allow-Origin`. |
+| `#gh=<owner>/<repo>` | Resolves the latest GitHub release and picks its `.ipa` asset. |
+| `#gh=<owner>/<repo>@<tag>` | Same, for a specific release tag. |
+
+After the download, **Install Now** signs and installs in one step (prompting for
+login and device pairing when needed).
+
+GitHub's release CDN does not allow cross-origin reads, so `#gh=` falls back to the
+public `https://gh-proxy.com/` mirror. The mirror is only used when GitHub reports a
+`sha256` digest for the asset, and the downloaded bytes are verified against it.
+Override with `localStorage.setItem('webmuxd:ipa-proxy', 'https://your-mirror/')`
+(`{url}` template supported) or disable it with `'off'`; `VITE_IPA_PROXY` sets the
+build-time default.
+
 ## Project Structure
 
 | Path | Purpose |
@@ -34,6 +54,12 @@ bun run build:frontend
 
 # Full WASM recompile from source (requires Rust, Emscripten, precompiled OpenSSL)
 bun run build:wasm
+```
+
+Static hosting (e.g. GitHub Pages under `/SideImpactor/`):
+
+```bash
+VITE_BASE=/SideImpactor/ VITE_WISP_URL=wss://your-relay.example/wisp/ bun run build:frontend
 ```
 
 ## Docker

@@ -194,6 +194,35 @@ describe('App — login modal', () => {
 });
 
 
+describe('App — remote ipa', () => {
+  it('downloads a #ipa link and offers one-click install', async () => {
+    const payload = new Uint8Array([1, 2, 3, 4]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(payload, { status: 200, headers: { 'content-length': String(payload.byteLength) } }),
+      ),
+    );
+    window.location.hash = '#ipa=https://cdn.example.com/app.ipa';
+
+    try {
+      render(<App />);
+
+      expect(await screen.findByText('Remote IPA')).toBeInTheDocument();
+      expect((await screen.findAllByText('app.ipa')).length).toBeGreaterThan(0);
+      expect(window.location.hash).toBe('#ipa=https://cdn.example.com/app.ipa');
+
+      const install = await screen.findByRole('button', { name: 'Install Now' });
+      expect(install).toBeEnabled();
+
+      await userEvent.click(install);
+      expect(await screen.findByText('Add Account', { selector: 'h2' })).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe('App — saved accounts rehydration', () => {
   it('loads stored session and shows Active in accounts list', async () => {
     window.localStorage.setItem(
