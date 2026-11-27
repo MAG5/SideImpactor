@@ -38,6 +38,31 @@ Override with `localStorage.setItem('webmuxd:ipa-proxy', 'https://your-mirror/')
 (`{url}` template supported) or disable it with `'off'`; `VITE_IPA_PROXY` sets the
 build-time default.
 
+## Anisette
+
+Apple's GSA endpoints need anisette headers (machine ID + one-time password) for
+every login request. They are fetched over HTTP from the relay's `/anisette`
+route, which forwards to a Mac-side anisette server. The Worker is not an open
+proxy: the upstream list is fixed to `mac-ani.jkcoxson.com` and
+`new.ani.sidestore.io`. Both are third-party services — they receive Apple's
+lookup request but never your Apple ID password, and the password is only sent
+to Apple over the WISP connection.
+
+The browser always requests a fresh header set (OTPs are single-use). The OS
+identity sent to Apple comes from the browser, not the upstream, so an old
+`<Mac OS X;10.12>` label from a server cannot trigger the GSA 503. Every value
+can be overridden for debugging:
+
+```js
+localStorage.setItem('webmuxd:anisette-url', 'https://your-relay.example/anisette');
+localStorage.setItem('webmuxd:anisette-client-info', '<Mac14,15> <Mac OS X;27.0.1;26A434> ...');
+```
+
+`VITE_ANISETTE_URL` sets the build-time endpoint; otherwise it is derived from
+`VITE_WISP_URL` (same host, path `/anisette`). Self-hosted relays must implement
+the route: `GET /anisette` returns the anisette JSON headers with
+`Access-Control-Allow-Origin`, and `OPTIONS` answers 204.
+
 ## Project Structure
 
 | Path | Purpose |
@@ -88,7 +113,7 @@ bun run deploy
 
 ```bash
 bun run test            # webmuxd unit tests
-bun run test:frontend   # frontend vitest suite (141 tests)
+bun run test:frontend   # frontend vitest suite (200 tests)
 ```
 
 ## Credits

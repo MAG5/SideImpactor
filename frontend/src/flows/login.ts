@@ -28,32 +28,19 @@ export interface EnsureAnisetteResult {
 }
 
 export async function ensureAnisetteData(
-  existing: AnisetteData | null,
   log: (msg: string) => void,
 ): Promise<EnsureAnisetteResult> {
-  if (existing) {
-    return { anisetteData: existing, provisioned: true };
-  }
-
   const anisetteService = await loadAnisetteService();
-  const anisette = await anisetteService.initAnisette();
-  if (anisette.isProvisioned) {
-    log('login: anisette already provisioned');
-  } else {
-    log('login: preparing anisette environment...');
-    await anisetteService.provisionAnisette();
-    log('login: anisette provisioned');
-  }
-
+  log('login: fetching anisette headers...');
+  // OTPs are single-use, so always take a fresh set instead of reusing a
+  // stored one (reuse makes Apple reject the request with -22421).
   const anisetteData = await anisetteService.getAnisetteData();
   log(`login: anisette ready (${shortToken(anisetteData.machineID)})`);
   return { anisetteData, provisioned: true };
 }
 
 export async function checkAnisetteProvisioned(): Promise<boolean> {
-  const anisetteService = await loadAnisetteService();
-  const anisette = await anisetteService.initAnisette();
-  return anisette.isProvisioned;
+  return true;
 }
 
 export interface LoginRequest {

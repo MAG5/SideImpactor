@@ -10,6 +10,23 @@ const APPLE_HOSTNAME_WHITELIST = [
   /^developerservices2\.apple\.com$/,
 ];
 
+/**
+ * Apple rejects identities provisioned by the Android CoreADI libraries inside
+ * anisette-js (`finishMachineProvisioning` -> 401 / ec=-29003), so browsers now
+ * take anisette headers from a Mac-side service. Upstreams are fixed here to
+ * avoid turning this Worker into an open proxy.
+ */
+const ANISETTE_UPSTREAMS = [
+  "https://mac-ani.jkcoxson.com/",
+  "https://new.ani.sidestore.io/",
+];
+
+const ANISETTE_CORS_HEADERS: Record<string, string> = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, OPTIONS",
+  "access-control-allow-headers": "accept",
+};
+
 wisp.options.hostname_whitelist = APPLE_HOSTNAME_WHITELIST;
 wisp.options.port_whitelist = [443];
 wisp.options.allow_direct_ip = false;
@@ -318,6 +335,56 @@ function json(status: number, body: unknown): Response {
   });
 }
 
+async function handleAnisette(request: Request): Promise<Response> {
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: ANISETTE_CORS_HEADERS });
+  }
+  if (request.method !== "GET") {
+    return new Response(JSON.stringify({ ok: false, error: "GET required" }), {
+      status: 405,
+      headers: {
+        ...ANISETTE_CORS_HEADERS,
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store",
+      },
+    });
+  }
+
+  // Every attempt returns a fresh one-time password, so responses are never cached.
+  for (const upstream of ANISETTE_UPSTREAMS) {
+    try {
+      const response = await fetch(upstream, {
+        headers: { accept: "application/json" },
+        redirect: "follow",
+      });
+      if (!response.ok) {
+        console.warn("Anisette upstream responded", upstream, response.status);
+        continue;
+      }
+      const body = await response.text();
+      return new Response(body, {
+        status: 200,
+        headers: {
+          ...ANISETTE_CORS_HEADERS,
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      });
+    } catch (error) {
+      console.warn("Anisette upstream failed", upstream, error);
+    }
+  }
+
+  return new Response(JSON.stringify({ ok: false, error: "anisette upstream unavailable" }), {
+    status: 502,
+    headers: {
+      ...ANISETTE_CORS_HEADERS,
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
@@ -328,6 +395,10 @@ export default {
         service: "webmuxd-wisp-demo",
         now: new Date().toISOString(),
       });
+    }
+
+    if (url.pathname === "/anisette") {
+      return await handleAnisette(request);
     }
 
     if (url.pathname.startsWith("/wisp")) {

@@ -586,7 +586,7 @@ export function App() {
 
         setBusy((prev) => ({ ...prev, install: false, sign: true }));
         addLog('remote install: signing ipa...');
-        const { anisetteData: nextAnisette } = await ensureAnisetteData(anisetteData, addLog);
+        const { anisetteData: nextAnisette } = await ensureAnisetteData(addLog);
         setAnisetteData(nextAnisette);
         setAnisetteProvisioned(true);
 
@@ -638,11 +638,11 @@ export function App() {
     let twoFactorErrorShown = false;
     try {
       saveText(APPLE_ID_STORAGE_KEY, trimmedAppleId);
-      addLog('login: initializing anisette...');
+      addLog('login: preparing anisette headers...');
 
       // Always fetch a fresh anisette OTP for login — the OTP is one-time-use
       // and the cached value is consumed after any previous attempt (even failed).
-      const { anisetteData: nextAnisette } = await ensureAnisetteData(null, addLog);
+      const { anisetteData: nextAnisette } = await ensureAnisetteData(addLog);
       setAnisetteData(nextAnisette);
       setAnisetteProvisioned(true);
       addLog('login: anisette ready, authenticating...');
@@ -733,7 +733,7 @@ export function App() {
     lastInstallPercentRef.current = 0;
 
     try {
-      const { anisetteData: nextAnisette } = await ensureAnisetteData(anisetteData, addLog);
+      const { anisetteData: nextAnisette } = await ensureAnisetteData(addLog);
       setAnisetteData(nextAnisette);
       setAnisetteProvisioned(true);
 

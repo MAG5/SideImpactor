@@ -1,20 +1,10 @@
 import { loadLibcurl, libcurl } from './wasm/libcurl';
+import { resolveWispUrl } from './lib/relay';
 
 let initialized = false;
 let initPromise: Promise<void> | null = null;
 
-/**
- * Static hosts (GitHub Pages) have no same-origin Wisp relay, so the endpoint
- * can be pointed elsewhere at build time via VITE_WISP_URL.
- */
-export function resolveWispUrl(): string {
-  const override = (import.meta.env.VITE_WISP_URL as string | undefined)?.trim();
-  if (override) {
-    return override;
-  }
-  const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${wsProto}//${location.host}/wisp/`;
-}
+export { resolveWispUrl };
 
 export async function initLibcurl(): Promise<void> {
   if (initialized) {
