@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   DEFAULT_ANISETTE_CLIENT_INFO,
-  DEFAULT_ANISETTE_USER_AGENT,
   getAnisetteClientInfo,
   getAnisetteData,
   getAnisetteEndpoint,
@@ -20,7 +19,7 @@ const REMOTE_HEADERS: Record<string, string> = {
   'X-Apple-I-Client-Time': '2026-11-27T00:00:00Z',
   'X-Apple-Locale': 'en_US',
   'X-Apple-I-TimeZone': '+0800',
-  'X-MMe-Client-Info': '<MacBookPro13,3> <Mac OS X;10.12.6;16G29> <com.apple.AuthKit/1 (com.apple.akd/1.0)>',
+  'X-MMe-Client-Info': '<MacBookPro18,3> <macOS;26.1;25B78> <com.apple.AuthKit/1 (com.apple.akd/1.0)>',
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -46,19 +45,18 @@ afterEach(() => {
 });
 
 describe('getAnisetteClientInfo', () => {
-  it('claims the modern macOS identity AuthKit sends so GSA acceptance matches', () => {
+  it('keeps the GSA-accepted identity: `Mac OS X;` label and a consistent version/build', () => {
     expect(DEFAULT_ANISETTE_CLIENT_INFO).toBe(
-      '<MacBookPro18,3> <macOS;26.6;25F84> <com.apple.AuthKit/1 (com.apple.akd/1.0)>',
+      '<MacBookPro13,3> <Mac OS X;26.6;25F84> <com.apple.AuthKit/1 (com.apple.akd/1.0)>',
     );
-    expect(DEFAULT_ANISETTE_USER_AGENT).toBe(
-      'AuthKit/1 (Macintosh; OS X 26.6) (com.apple.dt.Xcode/26.0)',
-    );
+    // Since 2026-11 the GSA edge answers 503 to any `macOS;` label.
+    expect(DEFAULT_ANISETTE_CLIENT_INFO).not.toContain('<macOS;');
     expect(getAnisetteClientInfo()).toBe(DEFAULT_ANISETTE_CLIENT_INFO);
   });
 
   it('honours the localStorage override and ignores a blank one', () => {
-    window.localStorage.setItem(ANISETTE_CLIENT_INFO_STORAGE_KEY, '<MacBookPro18,3> <macOS;15.2;24C101>');
-    expect(getAnisetteClientInfo()).toBe('<MacBookPro18,3> <macOS;15.2;24C101>');
+    window.localStorage.setItem(ANISETTE_CLIENT_INFO_STORAGE_KEY, '<Mac14,15> <Mac OS X;15.2;24C101>');
+    expect(getAnisetteClientInfo()).toBe('<Mac14,15> <Mac OS X;15.2;24C101>');
 
     window.localStorage.setItem(ANISETTE_CLIENT_INFO_STORAGE_KEY, '   ');
     expect(getAnisetteClientInfo()).toBe(DEFAULT_ANISETTE_CLIENT_INFO);
@@ -107,15 +105,14 @@ describe('toAnisetteData', () => {
   it('always uses the local client info, not the upstream identity', () => {
     const data = toAnisetteData(REMOTE_HEADERS);
     expect(data.deviceDescription).toBe(DEFAULT_ANISETTE_CLIENT_INFO);
-    expect(data.deviceDescription).not.toContain('MacBookPro13,3');
+    expect(data.deviceDescription).not.toContain('MacBookPro18,3');
   });
 
-  it('creates a single coherent identity across the header set', () => {
+  it('sends an identity Apple still accepts', () => {
     const data = toAnisetteData(REMOTE_HEADERS);
-    // GSA correlates the OS label with the GsService2 user agent; the pair must
-    // not mix an older client-info with a newer UA or vice versa.
-    expect(data.deviceDescription).toContain('macOS;26.6');
-    expect(DEFAULT_ANISETTE_USER_AGENT).toContain('OS X 26.6');
+    // The edge 503s `<macOS;...>`; the SRP stage wants version/build 26.6/25F84.
+    expect(data.deviceDescription).toContain('<Mac OS X;26.6;25F84>');
+    expect(data.deviceDescription).not.toContain('<macOS;');
   });
 
   it('falls back for optional headers', () => {

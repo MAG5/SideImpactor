@@ -51,14 +51,15 @@ ID password, and the password is only sent to Apple over the WISP connection.
 
 The browser always requests a fresh header set (OTPs are single-use). The device
 identity sent to Apple comes from the browser, not the upstream: it claims
-`<MacBookPro18,3> <macOS;26.6;25F84>` and pairs the SRP calls with AuthKit's
-`AuthKit/1 (Macintosh; OS X 26.6) (com.apple.dt.Xcode/26.0)` user agent. GSA
-correlates the two, so mixing an old client-info with a newer user agent (or
-vice versa) fails with -22410. Every value can be overridden for debugging:
+`<MacBookPro13,3> <Mac OS X;26.6;25F84> <com.apple.AuthKit/1 (com.apple.akd/1.0)>`.
+Apple validates that string at two stages (2026-11): the GSA edge answers
+HTTP 503 to any `X-MMe-Client-Info` containing `macOS;`, and the SRP stage
+answers -22410 unless the OS version/build pair is consistent (26.6 / 25F84).
+Every value can be overridden for debugging:
 
 ```js
 localStorage.setItem('webmuxd:anisette-url', 'https://your-relay.example/anisette');
-localStorage.setItem('webmuxd:anisette-client-info', '<MacBookPro18,3> <macOS;26.6;25F84> ...');
+localStorage.setItem('webmuxd:anisette-client-info', '<MacBookPro13,3> <Mac OS X;26.6;25F84> ...');
 ```
 
 The relay also sets `x-anisette-upstream` on `/anisette` responses so you can see

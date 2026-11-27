@@ -1,10 +1,7 @@
 import { strFromU8, unzipSync } from 'fflate';
 import type { AnisetteData, AppleAPI, AppID, Certificate, Device, Team } from 'altsign.js';
 import { initLibcurl } from './anisette-libcurl-init';
-import { DEFAULT_ANISETTE_USER_AGENT } from './anisette-service';
 import { requireLibcurl } from './wasm/libcurl';
-
-const GSA_SRP_URL_PREFIX = 'https://gsa.apple.com/grandslam/GsService2';
 
 const SIGNING_IDENTITY_STORAGE_KEY = 'webmuxd:signing-identities';
 const PRIMARY_APP_INFO_PLIST_RE = /^Payload\/[^/]+\.app\/Info\.plist$/;
@@ -478,31 +475,6 @@ async function loadAltsignModule(): Promise<AltsignModule> {
   return await altsignModulePromise;
 }
 
-/**
- * altsign.js sends a 2018 `akd/1.0 CFNetwork/978.0.7 Darwin/18.7.0` user agent,
- * which GSA pairs with its image-time anisette and answers -22410 ("This action
- * could not be completed"). AuthKit on a current Mac uses the one below for the
- * SRP endpoints; leave the 2FA endpoints on their existing `Xcode` identity.
- */
-function withAuthKitUserAgent(url: string, headers: HeadersInit | undefined): HeadersInit {
-  if (!url.startsWith(GSA_SRP_URL_PREFIX)) {
-    return headers ?? {};
-  }
-  const merged: Record<string, string> = {};
-  if (headers instanceof Headers) {
-    headers.forEach((value, key) => { merged[key] = value; });
-  } else if (Array.isArray(headers)) {
-    for (const [key, value] of headers) merged[key] = value;
-  } else if (headers) {
-    for (const [key, value] of Object.entries(headers)) merged[key] = String(value);
-  }
-  for (const key of Object.keys(merged)) {
-    if (key.toLowerCase() === 'user-agent') delete merged[key];
-  }
-  merged['User-Agent'] = DEFAULT_ANISETTE_USER_AGENT;
-  return merged;
-}
-
 async function getAppleApi(log?: (msg: string) => void): Promise<{ api: AppleAPI; fetch: AltsignFetch }> {
   const uiLog = log ?? (() => undefined);
   const { AppleAPI, Fetch } = await loadAltsignModule();
@@ -515,7 +487,7 @@ async function getAppleApi(log?: (msg: string) => void): Promise<{ api: AppleAPI
       const libcurl = requireLibcurl();
       const libcurlOpts = {
         method: options.method,
-        headers: withAuthKitUserAgent(url, options.headers),
+        headers: options.headers,
         body: options.body,
         redirect: 'manual',
         insecure: true,
@@ -526,6 +498,21 @@ async function getAppleApi(log?: (msg: string) => void): Promise<{ api: AppleAPI
       // Auto-retry on Apple GSA 503 (transient rate-limit / overload).
       // Use exponential backoff: 5s, 10s, 20s, 40s — up to ~75s total.
       if (url.includes('gsa.apple.com') && response.status === 503) {
+        // Since 2026-11 the edge also answers 503 with a small HTML page for
+        // device identities it refuses (any `macOS;` label). Retrying those
+        // hammers Apple without any chance of success, so fail fast instead.
+        let body = '';
+        try {
+          body = await response.text();
+        } catch {
+          // Fall through to the retry path if the body is unreadable.
+        }
+        if (body.trimStart().startsWith('<')) {
+          throw new Error(
+            'Apple rejected the device identity at its edge (HTTP 503, HTML page). ' +
+            'Clear localStorage "webmuxd:anisette-client-info" and sign in again, or wait for Apple to lift the block.',
+          );
+        }
         const delays = [5000, 10000, 20000, 40000];
         for (let attempt = 0; attempt < delays.length; attempt++) {
           const waitSec = delays[attempt] / 1000;
